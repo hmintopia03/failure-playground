@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <title>Failure Playground Dashboard</title>
+</head>
+<body>
+    <h1>Failure Playground</h1>
+
+    <div id="queue-warning"></div>
+    <div id="action-status"></div>
+    <div id="error-banner"></div>
+    <div id="loading-indicator"></div>
+    <div id="last-refresh-time"></div>
+
+    <div id="top-bar">
+        <button onclick="toggleDarkMode()">Toggle Dark Mode</button>
+        <label><input type="checkbox" id="auto-refresh-toggle"checked/>Auto Refresh</label>
+        <label>Refresh interval:<select id="refresh-interval">
+            <option value="1000">1s</option>
+            <option value="2000" selected>2s</option>
+            <option value="5000">5s</option>
+            <option value="10000">10s</option>
+        </select>
+    </label>
+        <button id="pause-button" onclick="pauseSystem()">Pause</button>
+        <button id="resume-button" onclick="resumeSystem()">Resume</button>
+        <button onclick="refresh()">Refresh Now</button>
+    </div>
+
+    <button class="danger-action" onclick="clearQueue()">Clear Redis Queue</button>
+    <button class="danger-action" onclick="resetSystem()">Reset System</button>
+    <a href="/report" target="_blank">Open System Report</a>
+    <h2>Metrics</h2>
+    <pre id="metrics">Loading...</pre>
+    <div id="metrics-cards" class="cards"></div>
+
+    <div class="chart-container">
+        <canvas id="task-chart"></canvas>
+    </div>
+
+    <h2>Workers</h2>
+    <div id="workers-panel">Loading workers...</div>
+    <button onclick="resetWorkerCounts()">Reset Worker Counts</button>
+
+    <div class="chart-container">
+        <canvas id="worker-chart"></canvas>
+    </div>
+
+    <h2>Alerts</h2>
+    <pre id="alerts-panel">Loading alerts...</pre>
+    <button onclick="clearAlerts()">Clear Alerts</button>
+
+    <div id="incident-summary"></div>
+
+    <h2>System State</h2>
+    <div id="system-state">Loading...</div>
+
+    <div class="controls">
+        <button class="danger-action" onclick="pauseSystem()">Pause</button>
+        <button class="danger-action" onclick="resumeSystem()">Resume</button>
+        <button onclick="createTask(0)">Create High Priority</button>
+        <button onclick="createTask(1)">Create Normal Priority</button>
+        <button onclick="createTask(2)">Create Low Priority</button>
+    </div>
+
+    <button class="danger-action" onclick="createPoisonTask()">Create Poison Task</button>
+    <button onclick="clearCompletedTasks()">Clear Completed Tasks</button>
+    <button onclick="clearFailedTasks()">Clear Failed Tasks</button>
+    
+    <button onclick="setFilter('all')">All</button>
+    <button onclick="setFilter('queued')">Queued</button>
+    <button onclick="setFilter('processing')">Processing</button>
+    <button onclick="setFilter('success')">Success</button>
+    <button onclick="setFilter('failed')">Failed</button>
+
+    <button class="danger-action" onclick="createBulkTasks(10)">Create 10 Tasks</button>
+    <button class="danger-action" onclick="createBulkTasks(50)">Create 50 Tasks</button>
+    
+    <input type="text" id="task-search" placeholder="Search task ID..." oninput="loadTasks()"/>
+    <select id="task-sort" onchange="loadTasks()">
+        <option value="id-asc">Oldest first</option>
+        <option value="id-desc">Newest first</option>
+        <option value="priority">Priority</option>
+        <option value="retries">Most retries</option>
+    </select>
+    <h2>Tasks</h2>
+
+    <table border="1" cellpadding="8">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Age</th>
+                <th>Status</th>
+                <th>Priority</th>
+                <th>Retries</th>
+                <th>Failure Reason</th>
+                <th>Poison</th>
+                <th>Action</th>
+                <th>Detail</th>
+            </tr>
+        </thead>
+
+        <tbody id="tasks-table">
+        </tbody>
+    </table>
+
+    <label>
+        <input
+            type="checkbox"
+            id="auto-scroll-logs"
+            checked
+        />
+        Auto-scroll logs
+    </label>
+    <h2>Recent Logs</h2>
+
+    <pre id="logs-panel">
+    Loading logs...
+    </pre>
+    <script src="/static/dashboard.js"></script>
+    <hr>
+    <footer>
+        <small id="footer-info">
+            Loading system info...
+        </small>
+    </footer>
+</body>
+</html>
+
