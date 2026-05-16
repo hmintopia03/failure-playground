@@ -134,3 +134,11 @@ body.dark-mode #top-bar {
     max-width: 700px;
     height: 300px;
 }
+.debug-only {
+    display: none;
+}
+.chart-container {
+    height: 260px;
+    margin-top: 16px;
+    margin-bottom: 24px;
+}

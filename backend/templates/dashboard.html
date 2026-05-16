@@ -8,13 +8,6 @@
     <title>Failure Playground Dashboard</title>
 </head>
 <body>
-    <h1>Failure Playground</h1>
-
-    <div id="queue-warning"></div>
-    <div id="action-status"></div>
-    <div id="error-banner"></div>
-    <div id="loading-indicator"></div>
-    <div id="last-refresh-time"></div>
 
     <div id="top-bar">
         <button onclick="toggleDarkMode()">Toggle Dark Mode</button>
@@ -25,17 +18,26 @@
             <option value="5000">5s</option>
             <option value="10000">10s</option>
         </select>
-    </label>
+        </label>
         <button id="pause-button" onclick="pauseSystem()">Pause</button>
         <button id="resume-button" onclick="resumeSystem()">Resume</button>
         <button onclick="refresh()">Refresh Now</button>
     </div>
 
+
+    <h1>Failure Playground</h1>
+
+    <div id="queue-warning"></div>
+    <div id="action-status"></div>
+    <div id="error-banner"></div>
+    <div id="loading-indicator"></div>
+    <div id="last-refresh-time"></div>
+
     <button class="danger-action" onclick="clearQueue()">Clear Redis Queue</button>
     <button class="danger-action" onclick="resetSystem()">Reset System</button>
     <a href="/report" target="_blank">Open System Report</a>
     <h2>Metrics</h2>
-    <pre id="metrics">Loading...</pre>
+    <pre id="metrics" class="debug-only" >Loading...</pre>
     <div id="metrics-cards" class="cards"></div>
 
     <div class="chart-container">
@@ -117,7 +119,7 @@
         <button onclick="nextTaskPage()">Next Tasks</button>
     </div>
 
-    <table border="1" cellpadding="8">
+    <!--<table border="1" cellpadding="8">
         <thead>
             <tr>
                 <th>ID</th>
@@ -134,8 +136,8 @@
 
         <tbody id="tasks-table">
         </tbody>
-    </table>
-
+    </table> -->
+    
     <label>
         <input
             type="checkbox"
@@ -169,9 +171,6 @@
     <div id="logs-summary"></div>
     <div id="logs"></div>
 
-    <pre id="logs-panel">
-    Loading logs...
-    </pre>
     <script src="/static/dashboard.js"></script>
 
 

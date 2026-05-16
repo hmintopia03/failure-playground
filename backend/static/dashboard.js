@@ -125,9 +125,10 @@ async function loadMetrics() {
         return;
     }
 
-    const chartData = {
-        labels: ["Queued", "Processing", "Success", "Failed"],
-        datasets: [{
+const chartData = {
+    labels: ["Queued", "Processing", "Success", "Failed"],
+    datasets: [
+        {
             label: "Tasks",
             data: [
                 data.queued,
@@ -135,23 +136,55 @@ async function loadMetrics() {
                 data.success,
                 data.failed,
             ],
-        }],
-    };
-
-    const ctx = document.getElementById("task-chart");
-
-    if (taskChart) {
-        taskChart.destroy();
-    }
-
-    taskChart = new Chart(ctx, {
-        type: "bar",
-        data: chartData,
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
+            backgroundColor: [
+                "rgba(34, 197, 94, 0.35)",
+                "rgba(59, 130, 246, 0.35)",
+                "rgba(16, 185, 129, 0.35)",
+                "rgba(239, 68, 68, 0.35)",
+            ],
+            borderColor: [
+                "rgba(34, 197, 94, 1)",
+                "rgba(59, 130, 246, 1)",
+                "rgba(16, 185, 129, 1)",
+                "rgba(239, 68, 68, 1)",
+            ],
+            borderWidth: 1,
         },
-    });
+    ],
+};
+
+const ctx = document.getElementById("task-chart");
+
+if (!ctx) {
+    console.warn("Missing task chart canvas");
+    return;
+}
+
+if (taskChart) {
+    taskChart.destroy();
+}
+
+taskChart = new Chart(ctx, {
+    type: "bar",
+    data: chartData,
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+            y: {
+                beginAtZero: true,
+                ticks: {
+                    precision: 0,
+                },
+            },
+        },
+        plugins: {
+            legend: {
+                display: true,
+            },
+        },
+    },
+});
 }
 
 async function loadLogs() {
@@ -279,7 +312,7 @@ if (paused) {
         <br>
         version: ${version}
         <br>
-        uptime: ${formatUptime(uptime)}`;
+        ${/*uptime: ${formatUptime(uptime)*/ ""}`;
 } else {
     el.innerHTML =
         `<b style="color:green">SYSTEM RUNNING</b>
@@ -288,7 +321,7 @@ if (paused) {
         <br>
         version: ${version}
         <br>
-        uptime: ${formatUptime(uptime)}`;
+        ${/* uptime: ${formatUptime(uptime)*/ ""}`;
 }
 }
 
