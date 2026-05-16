@@ -3,6 +3,15 @@ let refreshInProgress = false;
 let taskChart = null;
 let workerChart = null;
 
+let taskOffset = 0;
+let taskLimit = 20;
+
+let logOffset = 0;
+let logLimit = 30;
+
+let taskTotal = 0;
+
+
 function setFilter(status) {
 currentFilter = status;
 loadTasks();
@@ -38,68 +47,98 @@ document
         button.disabled = disabled;
     });
 }
+
+function previousTaskPage() {
+    taskOffset = Math.max(0, taskOffset - taskLimit);
+    loadTasks();
+}
+
+function nextTaskPage() {
+    if (taskOffset + taskLimit >= taskTotal) {
+        return;
+    }
+
+    taskOffset += taskLimit;
+    loadTasks();
+}
+
+function previousLogPage() {
+    logOffset = Math.max(0, logOffset - logLimit);
+    loadLogs();
+}
+
+function nextLogPage() {
+    if (logOffset + logLimit >= logTotal) {
+        return;
+    }
+
+    logOffset += logLimit;
+    loadLogs();
+}
+
+
+function applyTaskFilters() {
+    taskOffset = 0;
+    loadTasks();
+}
+
+function applyLogFilter() {
+    logOffset = 0;
+    loadLogs();
+}
+
 async function loadMetrics() {
-const data = await fetchJson("/metrics");
-const queueClass = data.queued > 20 ? "card-danger" : data.queued > 5 ? "card-warning" : "card-good";
-const failedClass = data.failed > 5 ? "card-danger" : data.failed > 0 ? "card-warning" : "card-good";
+    const data = await fetchJson("/metrics");
 
-document.getElementById("metrics-cards").innerHTML = `
-    <div class="card ${queueClass}"><span>Queued</span><strong>${data.queued}</strong></div>
-    <div class="card"><span>Processing</span><strong>${data.processing}</strong></div>
-    <div class="card"><span>Success</span><strong>${data.success}</strong></div>
-    <div class="card ${failedClass}"><span>Failed</span><strong>${data.failed}</strong></div>
-    <div class="card"><span>Workers Alive</span><strong>${data.alive_workers}</strong></div>
-    <div class="card"><span>Throughput/min</span><strong>${data.throughput_last_minute}</strong></div>
-`;
-const warningEl =
-    document.getElementById("queue-warning");
+    const queueClass =
+        data.queued > 20 ? "card-danger" :
+        data.queued > 5 ? "card-warning" :
+        "card-good";
 
-if (data.redis_queue_length > 20) {
-    warningEl.innerHTML =
-        "<b style='color:red'>HIGH QUEUE PRESSURE</b>";
-} else {
-    warningEl.innerHTML = "";
-}
+    const failedClass =
+        data.failed > 5 ? "card-danger" :
+        data.failed > 0 ? "card-warning" :
+        "card-good";
 
-document.getElementById("metrics").textContent =
-    JSON.stringify(data, null, 2);
+    document.getElementById("metrics-cards").innerHTML = `
+        <div class="card ${queueClass}"><span>Queued</span><strong>${data.queued}</strong></div>
+        <div class="card"><span>Processing</span><strong>${data.processing}</strong></div>
+        <div class="card"><span>Success</span><strong>${data.success}</strong></div>
+        <div class="card ${failedClass}"><span>Failed</span><strong>${data.failed}</strong></div>
+        <div class="card"><span>Workers Alive</span><strong>${data.alive_workers}</strong></div>
+        <div class="card"><span>Throughput/min</span><strong>${data.throughput_last_minute}</strong></div>
+    `;
 
-const chartData = {
-    labels: [
-        "Queued",
-        "Processing",
-        "Success",
-        "Failed",
-    ],
-    datasets: [{
-        label: "Tasks",
-        data: [
-            data.queued,
-            data.processing,
-            data.success,
-            data.failed,
-        ],
-    }]
-};
+    const warningEl = document.getElementById("queue-warning");
 
-const ctx =
-    document.getElementById("task-chart");
+    if (data.redis_queue_length > 20) {
+        warningEl.innerHTML = "<b style='color:red'>HIGH QUEUE PRESSURE</b>";
+    } else {
+        warningEl.innerHTML = "";
+    }
 
-if (taskChart) {
-    taskChart.destroy();
-}
+    document.getElementById("metrics").textContent =
+        JSON.stringify(data, null, 2);
 
-taskChart = new Chart(ctx, {
-    type: "bar",
-    data: chartData,
-    options: {
-        responsive: true,
-        maintainAspectRatio: false,
-    },
-});
-if (typeof Chart !== "undefined") {
-    const ctx =
-        document.getElementById("task-chart");
+    if (typeof Chart === "undefined") {
+        console.warn("Chart.js is not loaded");
+        return;
+    }
+
+    const chartData = {
+        labels: ["Queued", "Processing", "Success", "Failed"],
+        datasets: [{
+            label: "Tasks",
+            data: [
+                data.queued,
+                data.processing,
+                data.success,
+                data.failed,
+            ],
+        }],
+    };
+
+    const ctx = document.getElementById("task-chart");
 
     if (taskChart) {
         taskChart.destroy();
@@ -114,123 +153,68 @@ if (typeof Chart !== "undefined") {
         },
     });
 }
-}
-
-async function loadTasks() {
-const response = await fetch("/tasks");
-const tasks = await response.json();
-const visibleTasks =
-currentFilter === "all"
-    ? tasks
-    : tasks.filter(task => task.status === currentFilter);
-const searchValue =
-document
-    .getElementById("task-search")
-    .value
-    .trim();
-const table =
-    document.getElementById("tasks-table");
-
-table.innerHTML = "";
-
-let searchedTasks =
-    searchValue === ""
-        ? visibleTasks
-        : visibleTasks.filter(task =>
-            String(task.id).includes(searchValue)
-        );
-
-const sortValue =
-    document.getElementById("task-sort").value;
-
-searchedTasks.sort((a, b) => {
-    if (sortValue === "id-asc") {
-        return a.id - b.id;
-    }
-
-    if (sortValue === "id-desc") {
-        return b.id - a.id;
-    }
-
-    if (sortValue === "priority") {
-        return a.priority - b.priority;
-    }
-
-    if (sortValue === "retries") {
-        return b.retry_count - a.retry_count;
-    }
-
-    return 0;
-});
-
-
-searchedTasks.forEach(task => {
-    const row = document.createElement("tr");
-    row.className = `row-${task.status}`;
-    const createdAt = new Date(task.created_at + "Z");
-    const ageSeconds = Math.floor((Date.now() - createdAt) / 1000);
-    const isOldQueuedTask = task.status === "queued" && ageSeconds > 30;
-    if (isOldQueuedTask) {
-        row.className += " old-queued";
-    }
-    row.innerHTML = `
-        <td>${task.id}</td>
-        <td>${formatAge(ageSeconds)}</td>
-        <td class="status ${task.status}">
-            ${task.status}
-        </td>
-        <td>${task.priority}</td>
-        <td>${task.retry_count}</td>
-        <td>${task.failure_reason || ""}</td>
-        <td>${task.is_poison ? "yes" : ""}</td>
-        <td>
-            ${
-                task.status === "failed"
-                    ? `<button onclick="retryTask(${task.id})">Retry</button>`
-                    : ""
-            }
-            <button onclick="duplicateTask(${task.id})">
-                Duplicate
-            </button>
-        </td>
-        <td>
-            <a href="/tasks/${task.id}" target="_blank">Open</a>
-        </td>
-    `;
-
-    table.appendChild(row);
-});
-}
 
 async function loadLogs() {
-const response = await fetch("/logs");
-const logs = await response.json();
 
-const recentLogs = logs.slice(-15);
+    let logTotal = 0;
+    const taskIdFilter = document.getElementById("log-task-id-filter");
 
-const logsPanel =
-    document.getElementById("logs-panel");
+    const params = new URLSearchParams();
 
-logsPanel.textContent =
-    recentLogs
-        .map(log =>
-            `[${log.created_at}] Task ${log.task_id}: ${log.message}`
-        )
-        .join("\n");
+    params.set("limit", String(logLimit));
+    params.set("offset", String(logOffset));
 
-const autoScroll =
-    document.getElementById("auto-scroll-logs").checked;
+    if (taskIdFilter && taskIdFilter.value) {
+        params.set("task_id", taskIdFilter.value);
+    }
 
-if (autoScroll) {
-    logsPanel.scrollTop = logsPanel.scrollHeight;
+    const data = await fetchJson(`/logs?${params.toString()}`);
+    const logs = Array.isArray(data) ? data : data.items;
+    logTotal = Array.isArray(data) ? logs.length : data.total;
+
+
+    const html = logs
+        .map(log => {
+            return `
+                <div>
+                    <b>Task #${log.task_id}</b>
+                    - ${log.message}
+                </div>
+            `;
+        })
+        .join("");
+
+    const logsEl =
+        document.getElementById("logs") ||
+        document.getElementById("logs-panel") ||
+        document.getElementById("log-list");
+
+    if (!logsEl) {
+        console.warn("Missing logs container element");
+        return;
+    }
+
+    logsEl.innerHTML = html;
+
+    const summaryEl = document.getElementById("logs-summary");
+
+    if (summaryEl) {
+        const start = data.total === 0 ? 0 : logOffset + 1;
+        const end = Math.min(logOffset + logs.length, data.total);
+
+        summaryEl.textContent =
+            `Showing ${start}-${end} of ${data.total} logs`;
+    }
 }
-    recentLogs
-        .map(log =>
-            `[${log.created_at}] Task ${log.task_id}: ${log.message}`
-        )
-        .join("\\n");
-}
+function clearLogFilter() {
+    const taskIdFilter = document.getElementById("log-task-id-filter");
 
+    if (taskIdFilter) {
+        taskIdFilter.value = "";
+    }
+
+    loadLogs();
+}
 async function retryTask(taskId) {
 await fetch(`/tasks/${taskId}/retry`, {
     method: "POST"
@@ -403,59 +387,48 @@ await fetch("/tasks/failed", {
 await refresh();
 }
 async function loadWorkers() {
-const response = await fetch("/workers");
-const workers = await response.json();
+    const response = await fetch("/workers");
+    const workers = await response.json();
 
-const now = new Date();
+    const now = new Date();
 
-document.getElementById("workers-panel").innerHTML =
-    workers
-        .map(worker => {
-            const lastSeen = new Date(worker.last_seen + "Z");
-            const secondsAgo = Math.floor((now - lastSeen) / 1000);
+    document.getElementById("workers-panel").innerHTML =
+        workers
+            .map(worker => {
+                const lastSeen = new Date(worker.last_seen + "Z");
+                const secondsAgo = Math.floor((now - lastSeen) / 1000);
 
-            const status =
-                secondsAgo <= 5
-                    ? "alive"
-                    : "stale";
+                const status =
+                    secondsAgo <= 5
+                        ? "alive"
+                        : "stale";
 
-            return `
-                <div>
-                    <b style="color:${status === "alive" ? "green" : "red"}">
-                        ${worker.worker_name} - ${status}
-                    </b>
-                    - ${secondsAgo}s ago
-                    - processed: ${worker.processed_count}
-                </div>
-            `;
-        })
-        .join("\\n");
-        const workerCtx =
-            document.getElementById("worker-chart");
+                return `
+                    <div>
+                        <b style="color:${status === "alive" ? "green" : "red"}">
+                            ${worker.worker_name} - ${status}
+                        </b>
+                        - ${secondsAgo}s ago
+                        - processed: ${worker.processed_count}
+                    </div>
+                `;
+            })
+            .join("");
 
-        const workerChartData = {
-            labels: workers.map(worker => worker.worker_name),
-            datasets: [{
-                label: "Processed Tasks",
-                data: workers.map(worker => worker.processed_count),
-            }]
-        };
+    if (typeof Chart === "undefined") {
+        console.warn("Chart.js is not loaded");
+        return;
+    }
 
-        if (workerChart) {
-            workerChart.destroy();
-        }
+    const workerCtx = document.getElementById("worker-chart");
 
-        workerChart = new Chart(workerCtx, {
-            type: "bar",
-            data: workerChartData,
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-            },
-        });
-        if (typeof Chart !== "undefined") {
-    const workerCtx =
-        document.getElementById("worker-chart");
+    const workerChartData = {
+        labels: workers.map(worker => worker.worker_name),
+        datasets: [{
+            label: "Processed Tasks",
+            data: workers.map(worker => worker.processed_count),
+        }],
+    };
 
     if (workerChart) {
         workerChart.destroy();
@@ -470,7 +443,67 @@ document.getElementById("workers-panel").innerHTML =
         },
     });
 }
+
+async function loadTasks() {
+    const statusFilter = document.getElementById("task-status-filter");
+    const poisonFilter = document.getElementById("task-poison-filter");
+
+    const params = new URLSearchParams();
+
+    params.set("limit", String(taskLimit));
+    params.set("offset", String(taskOffset));
+
+    if (statusFilter && statusFilter.value) {
+        params.set("status", statusFilter.value);
+    }
+
+    if (poisonFilter && poisonFilter.value) {
+        params.set("is_poison", poisonFilter.value);
+    }
+
+    const data = await fetchJson(`/tasks?${params.toString()}`);
+    const tasks = Array.isArray(data) ? data : data.items;
+
+    taskTotal = Array.isArray(data) ? tasks.length : data.total;
+
+    const html = tasks
+        .map(task => {
+            return `
+                <div>
+                    <b>#${task.id}</b>
+                    - ${task.status}
+                    - retries: ${task.retry_count}
+                    - priority: ${task.priority}
+                    - poison: ${task.is_poison}
+                </div>
+            `;
+        })
+        .join("");
+
+    const tasksEl =
+        document.getElementById("tasks") ||
+        document.getElementById("tasks-panel") ||
+        document.getElementById("task-list");
+
+    if (!tasksEl) {
+        console.warn("Missing tasks container element");
+        return;
+    }
+
+    tasksEl.innerHTML = html;
+
+    const summaryEl = document.getElementById("tasks-summary");
+
+    if (summaryEl) {
+        const total = Array.isArray(data) ? tasks.length : data.total;
+        const start = total === 0 ? 0 : taskOffset + 1;
+        const end = Math.min(taskOffset + tasks.length, total);
+
+        summaryEl.textContent =
+            `Showing ${start}-${end} of ${total} tasks`;
+    }
 }
+
 async function resetWorkerCounts() {
 await fetch("/workers/reset-counts", {
     method: "POST"
@@ -596,3 +629,25 @@ async function fetchJson(url) {
 
     return response.json();
 }
+
+document.addEventListener("DOMContentLoaded", () => {
+    const statusFilter = document.getElementById("task-status-filter");
+    const poisonFilter = document.getElementById("task-poison-filter");
+    const logTaskIdFilter = document.getElementById("log-task-id-filter");
+
+    if (statusFilter) {
+        statusFilter.addEventListener("change", loadTasks);
+    }
+
+    if (poisonFilter) {
+        poisonFilter.addEventListener("change", loadTasks);
+    }
+
+    if (logTaskIdFilter) {
+        logTaskIdFilter.addEventListener("keydown", event => {
+            if (event.key === "Enter") {
+                loadLogs();
+            }
+        });
+    }
+});

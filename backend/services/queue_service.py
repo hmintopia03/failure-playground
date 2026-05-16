@@ -1,12 +1,16 @@
 from config import TASK_QUEUE_NAME
 from redis_client import redis_client
-
-
-TASK_QUEUE_NAME = "task_queue"
+from logger import log_event
 
 
 def enqueue_task(task_id: int):
     redis_client.lpush(TASK_QUEUE_NAME, task_id)
+    
+    log_event(
+        "task_enqueued",
+        task_id=task_id,
+        queue_name=TASK_QUEUE_NAME,
+    )
 
 
 def dequeue_task():

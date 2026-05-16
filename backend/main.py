@@ -1,34 +1,44 @@
-from fastapi import FastAPI
+import os
+from collections import Counter
+from datetime import datetime, UTC, timezone
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, Query, Request
+from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from db import Base, engine, SessionLocal
-from models import Task, TaskLog, WorkerHeartbeat
-from sqlalchemy import text
-
-from fastapi.responses import HTMLResponse
-from redis_client import redis_client
-
-from models import Task, TaskLog, WorkerHeartbeat, Alert
-from datetime import datetime
-import os
-
-from schemas import task_to_dict, worker_to_dict, alert_to_dict
-
-from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
-from fastapi import Request
-from services.task_service import create_task
 from config import TASK_QUEUE_NAME
-
-from fastapi import Depends
+from db import Base, SessionLocal, engine
 from dependencies import get_db
+from models import Alert, Task, TaskLog, WorkerHeartbeat
+from redis_client import redis_client
+from schemas import alert_to_dict, task_to_dict, worker_to_dict
+from services.task_service import create_task
 
+from fastapi.responses import FileResponse
 
-from collections import Counter
-from datetime import datetime, timezone
-from sqlalchemy import func
-from fastapi import Depends
+BASE_DIR = Path(__file__).resolve().parent
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
+app = FastAPI()
+
+app.mount(
+    "/static",
+    StaticFiles(directory=str(BASE_DIR / "static")),
+    name="static",
+)
+
+@app.get("/", response_class=HTMLResponse)
+def dashboard(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="dashboard.html",
+        context={},
+    )
 
 ALERT_COOLDOWN_SECONDS = 60
 QUEUE_PRESSURE_THRESHOLD = 20
@@ -41,68 +51,117 @@ from services.queue_service import (
     get_queue_length,
 )
 
-Base.metadata.create_all(bind=engine)
-
 ENVIRONMENT = os.getenv("ENVIRONMENT", "local")
-SYSTEM_VERSION = "0.1.0"
-SYSTEM_STARTED_AT = datetime.utcnow()
 
+if ENVIRONMENT != "test":
+    Base.metadata.create_all(bind=engine)
+
+SYSTEM_VERSION = "0.1.0"
+SYSTEM_STARTED_AT = datetime.now(UTC)
 SYSTEM_PAUSED = False
 
-app = FastAPI()
 
-templates = Jinja2Templates(directory="templates")
-app.mount("/static", StaticFiles(directory="static"), name="static")
+def ensure_utc(value):
+    if value is None:
+        return None
+
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+
+    return value
 
 @app.post("/tasks")
 def create_task_endpoint(
     priority: int = 1,
-    is_poison: bool = False
+    is_poison: bool = False,
+    db: Session = Depends(get_db),
 ):
-    db: Session = SessionLocal()
-
     task = create_task(
         db=db,
         priority=priority,
-        is_poison=is_poison
+        is_poison=is_poison,
     )
 
     enqueue_task(task.id)
 
-    result = task_to_dict(task)
-
-    db.close()
-
-    return result
+    return task_to_dict(task)
 
 @app.get("/tasks")
-def get_tasks(db: Session = Depends(get_db)):
-    tasks = db.query(Task).all()
+def get_tasks(
+    status: str | None = Query(
+        default=None,
+        pattern="^(queued|processing|success|failed)$",
+    ),
+    is_poison: bool | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+):
+    query = db.query(Task)
 
-    return [
-        task_to_dict(task)
-        for task in tasks
-    ]
+    if status is not None:
+        query = query.filter(Task.status == status)
+
+    if is_poison is not None:
+        query = query.filter(Task.is_poison == is_poison)
+
+    total = query.count()
+
+    tasks = (
+        query
+        .order_by(Task.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    return {
+        "items": [
+            task_to_dict(task)
+            for task in tasks
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 @app.get("/logs")
-def get_logs():
-    db: Session = SessionLocal()
+def get_logs(
+    task_id: int | None = Query(default=None, ge=1),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+):
 
-    logs = db.query(TaskLog).all()
+    query = db.query(TaskLog)
 
-    result = []
+    if task_id is not None:
+        query = query.filter(TaskLog.task_id == task_id)
 
-    for log in logs:
-        result.append({
-            "task_id": log.task_id,
-            "message": log.message,
-            "created_at": log.created_at
-        })
+    total = query.count()
 
-    db.close()
+    logs = (
+        query
+        .order_by(TaskLog.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
 
-    return result
-
+    return {
+        "items": [
+            {
+                "id": log.id,
+                "task_id": log.task_id,
+                "message": log.message,
+                "created_at": log.created_at,
+            }
+            for log in logs
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 @app.get("/dead-letter")
 def get_dead_letter_tasks():
@@ -247,10 +306,8 @@ def _count_workers(db: Session, now: datetime) -> tuple[int, int]:
 
 
 @app.get("/metrics")
-def get_metrics():
-    db: Session = SessionLocal()
-
-    redis_queue_length = redis_client.llen(TASK_QUEUE_NAME)
+def get_metrics(db: Session = Depends(get_db)):
+    redis_queue_length = get_queue_length()
 
     queued_count = db.query(Task).filter(Task.status == "queued").count()
     processing_count = db.query(Task).filter(Task.status == "processing").count()
@@ -258,7 +315,7 @@ def get_metrics():
     failed_count = db.query(Task).filter(Task.status == "failed").count()
 
     failure_reasons = {}
-
+    
     failed_tasks = (
         db.query(Task)
         .filter(Task.status == "failed")
@@ -304,13 +361,17 @@ def get_metrics():
 
     workers = db.query(WorkerHeartbeat).all()
 
+    now = datetime.now(UTC)
+
     for worker in workers:
         if not worker.last_seen:
             stale_workers += 1
             continue
 
+        last_seen = ensure_utc(worker.last_seen)
+
         seconds_since_seen = (
-            datetime.utcnow() - worker.last_seen
+            now - last_seen
         ).total_seconds()
 
         if seconds_since_seen <= 10:
@@ -325,19 +386,22 @@ def get_metrics():
         .filter(Task.status == "success")
         .all()
     )
+    
 
     for task in recent_successes:
         if not task.updated_at:
             continue
 
+        updated_at = ensure_utc(task.updated_at)
+
         seconds_since_update = (
-            datetime.utcnow() - task.updated_at
+            now - updated_at
         ).total_seconds()
 
         if seconds_since_update <= 60:
             throughput_last_minute += 1
 
-    result = {
+    return {
         "queued": queued_count,
         "processing": processing_count,
         "success": success_count,
@@ -359,39 +423,37 @@ def get_metrics():
         "throughput_last_minute": throughput_last_minute,
     }
 
-    db.close()
-
-    return result
 @app.get("/health")
-def health_check():
+def health_check(db: Session = Depends(get_db)):
+    database_status = "ok"
+    redis_status = "ok"
+
     try:
-        db: Session = SessionLocal()
-
         db.execute(text("SELECT 1"))
+    except Exception:
+        database_status = "error"
 
-        db.close()
+    try:
+        redis_client.ping()
+    except Exception:
+        redis_status = "error"
 
-        uptime_seconds = int(
-            (datetime.utcnow() - SYSTEM_STARTED_AT).total_seconds()
-        )
+    overall_status = "ok"
 
-        return {
-            "status": "healthy",
-            "database": "connected",
-            "uptime_seconds": uptime_seconds
-        }
+    if database_status != "ok" or redis_status != "ok":
+        overall_status = "degraded"
 
-    except Exception as e:
-        return {
-            "status": "unhealthy",
-            "error": str(e)
-        }
+    return {
+        "status": overall_status,
+        "database": database_status,
+        "redis": redis_status,
+    }
     
 @app.get("/dashboard")
 def dashboard(request: Request):
     return templates.TemplateResponse(
-        request,
-        "dashboard.html"
+        "dashboard.html",
+        {"request": request},
     )
 
 @app.post("/pause")
@@ -413,49 +475,17 @@ def get_system_state():
     return {"paused": SYSTEM_PAUSED}
 
 @app.get("/workers")
-def get_workers():
-    db: Session = SessionLocal()
-
+def get_workers(db: Session = Depends(get_db)):
     workers = db.query(WorkerHeartbeat).all()
 
     result = []
 
     for worker in workers:
-        seconds_since_seen = (
-            datetime.utcnow() - worker.last_seen
-        ).total_seconds()
-
-        if seconds_since_seen > 10:
-            existing_alert = (
-                db.query(Alert)
-                .filter(Alert.message.contains(f"Worker stale: {worker.worker_name}"))
-                .order_by(Alert.id.desc())
-                .first()
-            )
-
-            should_create_alert = True
-
-            if existing_alert:
-                seconds_since_last_alert = (
-                    datetime.utcnow() - existing_alert.created_at
-                ).total_seconds()
-
-                if seconds_since_last_alert < 60:
-                    should_create_alert = False
-
-            if should_create_alert:
-                alert = Alert(
-                    message=f"Worker stale: {worker.worker_name}"
-                )
-                db.add(alert)
-                db.commit()
         result.append({
             "worker_name": worker.worker_name,
             "last_seen": worker.last_seen,
             "processed_count": worker.processed_count,
         })
-
-    db.close()
 
     return result
 
@@ -557,9 +587,7 @@ def create_bulk_tasks(count: int = 10, priority: int = 1):
     }
 
 @app.get("/alerts")
-def get_alerts():
-    db: Session = SessionLocal()
-
+def get_alerts(db: Session = Depends(get_db)):
     alerts = db.query(Alert).all()
 
     result = []
@@ -568,10 +596,8 @@ def get_alerts():
         result.append({
             "id": alert.id,
             "message": alert.message,
-            "created_at": alert.created_at
+            "created_at": alert.created_at,
         })
-
-    db.close()
 
     return result
 
@@ -647,3 +673,93 @@ def reset_system():
     return {
         "message": "System reset complete"
     }
+
+@app.get("/prometheus", response_class=PlainTextResponse)
+def get_prometheus_metrics(db: Session = Depends(get_db)):
+    queued_count = db.query(Task).filter(Task.status == "queued").count()
+    processing_count = db.query(Task).filter(Task.status == "processing").count()
+    success_count = db.query(Task).filter(Task.status == "success").count()
+    failed_count = db.query(Task).filter(Task.status == "failed").count()
+
+    poison_count = (
+        db.query(Task)
+        .filter(Task.is_poison == True)
+        .count()
+    )
+
+    failed_poison_count = (
+        db.query(Task)
+        .filter(Task.is_poison == True)
+        .filter(Task.status == "failed")
+        .count()
+    )
+
+    redis_queue_length = get_queue_length()
+
+    workers = db.query(WorkerHeartbeat).all()
+
+    now = datetime.now(UTC)
+
+    alive_workers = 0
+    stale_workers = 0
+
+    for worker in workers:
+        if not worker.last_seen:
+            stale_workers += 1
+            continue
+
+        last_seen = ensure_utc(worker.last_seen)
+
+        seconds_since_seen = (
+            now - last_seen
+        ).total_seconds()
+
+        if seconds_since_seen <= 10:
+            alive_workers += 1
+        else:
+            stale_workers += 1
+
+    metrics = [
+        "# HELP failure_playground_tasks_queued Number of queued tasks",
+        "# TYPE failure_playground_tasks_queued gauge",
+        f"failure_playground_tasks_queued {queued_count}",
+        "",
+        "# HELP failure_playground_tasks_processing Number of processing tasks",
+        "# TYPE failure_playground_tasks_processing gauge",
+        f"failure_playground_tasks_processing {processing_count}",
+        "",
+        "# HELP failure_playground_tasks_success Number of successful tasks",
+        "# TYPE failure_playground_tasks_success gauge",
+        f"failure_playground_tasks_success {success_count}",
+        "",
+        "# HELP failure_playground_tasks_failed Number of failed tasks",
+        "# TYPE failure_playground_tasks_failed gauge",
+        f"failure_playground_tasks_failed {failed_count}",
+        "",
+        "# HELP failure_playground_tasks_poison Number of poison tasks",
+        "# TYPE failure_playground_tasks_poison gauge",
+        f"failure_playground_tasks_poison {poison_count}",
+        "",
+        "# HELP failure_playground_tasks_poison_failed Number of failed poison tasks",
+        "# TYPE failure_playground_tasks_poison_failed gauge",
+        f"failure_playground_tasks_poison_failed {failed_poison_count}",
+        "",
+        "# HELP failure_playground_redis_queue_length Redis queue length",
+        "# TYPE failure_playground_redis_queue_length gauge",
+        f"failure_playground_redis_queue_length {redis_queue_length}",
+        "",
+        "# HELP failure_playground_workers_alive Number of alive workers",
+        "# TYPE failure_playground_workers_alive gauge",
+        f"failure_playground_workers_alive {alive_workers}",
+        "",
+        "# HELP failure_playground_workers_stale Number of stale workers",
+        "# TYPE failure_playground_workers_stale gauge",
+        f"failure_playground_workers_stale {stale_workers}",
+        "",
+    ]
+
+    return "\n".join(metrics)
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return FileResponse(str(BASE_DIR / "static" / "favicon.svg"))

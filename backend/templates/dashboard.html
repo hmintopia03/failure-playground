@@ -87,7 +87,35 @@
         <option value="priority">Priority</option>
         <option value="retries">Most retries</option>
     </select>
+
     <h2>Tasks</h2>
+
+    <div>
+        <label for="task-status-filter">Status:</label>
+        <select id="task-status-filter">
+            <option value="">All</option>
+            <option value="queued">Queued</option>
+            <option value="processing">Processing</option>
+            <option value="success">Success</option>
+            <option value="failed">Failed</option>
+        </select>
+
+        <label for="task-poison-filter">Poison:</label>
+        <select id="task-poison-filter">
+            <option value="">All</option>
+            <option value="true">Poison only</option>
+            <option value="false">Normal only</option>
+        </select>
+
+        <button onclick="applyTaskFilters()">Apply Filters</button>
+    </div>
+
+    <div id="tasks-summary"></div>
+    <div id="tasks"></div>
+    <div>
+        <button onclick="previousTaskPage()">Previous Tasks</button>
+        <button onclick="nextTaskPage()">Next Tasks</button>
+    </div>
 
     <table border="1" cellpadding="8">
         <thead>
@@ -116,12 +144,38 @@
         />
         Auto-scroll logs
     </label>
-    <h2>Recent Logs</h2>
+
+    <h2>Logs</h2>
+
+    <div>
+        <label for="log-task-id-filter">Task ID:</label>
+        <input
+            id="log-task-id-filter"
+            type="number"
+            placeholder="ex: 12"
+        />
+
+        <button onclick="loadLogs()">Apply Log Filter</button>
+        <button onclick="clearLogFilter()">Clear</button>
+
+        <div>
+            <button onclick="previousLogPage()">Previous Logs</button>
+            <button onclick="nextLogPage()">Next Logs</button>
+        </div>
+        <button onclick="applyLogFilter()">Apply Log Filter</button>
+    </div>
+    
+
+    <div id="logs-summary"></div>
+    <div id="logs"></div>
 
     <pre id="logs-panel">
     Loading logs...
     </pre>
     <script src="/static/dashboard.js"></script>
+
+
+    
     <hr>
     <footer>
         <small id="footer-info">

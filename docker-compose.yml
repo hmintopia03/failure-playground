@@ -1,10 +1,12 @@
 services:
   api:
-    build: .
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "8001:8000"
     volumes:
-      - .:/app
+      - ./backend:/app
     environment:
       DATABASE_URL: postgresql+psycopg2://app:app@postgres:5432/failure_playground
       ENVIRONMENT: docker-local
@@ -13,33 +15,44 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
 
   worker-a:
-    build: .
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     command: python worker.py
     environment:
       WORKER_NAME: worker-a
       DATABASE_URL: postgresql+psycopg2://app:app@postgres:5432/failure_playground
     volumes:
-      - .:/app
+      - ./backend:/app
     depends_on:
       api:
-        condition: service_started
+        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
         condition: service_started
   worker-b:
-    build: .
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     command: python worker.py
     environment:
       WORKER_NAME: worker-b
       DATABASE_URL: postgresql+psycopg2://app:app@postgres:5432/failure_playground
     volumes:
-      - .:/app
+      - ./backend:/app
     depends_on:
       api:
-        condition: service_started
+        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
@@ -47,7 +60,7 @@ services:
   redis:
     image: redis:7
     ports:
-      - "6379:6379"
+      - "6380:6379"
 
   postgres:
     image: postgres:16
@@ -56,7 +69,7 @@ services:
       POSTGRES_PASSWORD: app
       POSTGRES_DB: failure_playground
     ports:
-      - "5433:5432"
+      - "5434:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -64,6 +77,26 @@ services:
       interval: 2s
       timeout: 5s
       retries: 10
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: failure-playground-prometheus
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on:
+      - api
+  grafana:
+    image: grafana/grafana:latest
+    container_name: failure-playground-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
 
 volumes:
   postgres_data:
+
