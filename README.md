@@ -383,3 +383,4 @@ The remaining work is mostly production hardening, documentation polish, and dep
 ## Screenshot
 
 ![Failure Playground dashboard](backend/dashboard.png)
+![Failure Playground grafana](backend/grafana.png)
