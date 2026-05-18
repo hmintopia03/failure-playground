@@ -32,6 +32,9 @@ The goal is to understand how backend systems behave under failure.
 - Docker Compose local infrastructure
 - Automated tests with pytest
 - GitHub Actions CI
+- Alembic database migrations
+- Worker recovery behavior
+- Worker success, retry, final failure, and poison task test coverage
 
 ---
 
@@ -266,6 +269,7 @@ From the project root:
 ```bash
 docker compose up --build
 ```
+When the API container starts, it runs Alembic migrations before launching the FastAPI server.
 
 Then open:
 
@@ -313,6 +317,11 @@ The test suite covers:
 - API filtering
 - API query validation
 - Structured logging behavior
+- Worker recovery behavior
+- Worker success path
+- Worker retry path
+- Worker final failure path
+- Worker poison task path
 
 Tests use:
 
@@ -347,7 +356,7 @@ Current limitations:
 
 - Dashboard uses polling instead of WebSockets
 - No authentication or authorization yet
-- No Alembic migration setup yet
+- Alembic is configured, but migration history is still minimal because the project started with an existing schema.
 - No Kubernetes deployment yet
 - No OpenTelemetry tracing yet
 - No external deployment target yet
