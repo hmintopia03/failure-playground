@@ -1,99 +1,48 @@
 # Failure Playground
 
-**Failure Playground** is a distributed task-processing playground for learning backend and platform engineering concepts.
+**Failure Playground** is a local **platform engineering playground** focused on distributed worker systems, observability, and failure handling.
 
-It simulates a small infrastructure system with task queues, background workers, retries, failure handling, worker heartbeats, queue pressure alerts, structured logs, metrics, health checks, and an operational dashboard.
+It simulates a production-style asynchronous task-processing system using FastAPI, PostgreSQL, Redis, Prometheus, Grafana, OpenTelemetry, and Jaeger — built specifically to explore how backend infrastructure behaves under failure.
 
-> The goal is not to build a business application. The goal is to understand how backend systems behave **under failure**.
-
----
-
-## What This Project Demonstrates
-
-- FastAPI backend API
-- Redis-backed task queue
-- PostgreSQL persistence
-- Background worker processes
-- Retry logic with backoff
-- Poison task simulation
-- Worker heartbeat tracking
-- Queue pressure alerts
-- System pause/resume controls
-- Task and log pagination & filtering
-- Structured JSON logging
-- Health check endpoint
-- Human-readable metrics endpoint
-- Prometheus metrics export
-- Grafana dashboard provisioning
-- Operational dashboard
-- Docker Compose local infrastructure
-- Automated tests with pytest
-- GitHub Actions CI
-- Alembic database migrations
-- Worker recovery behavior
-- Worker success, retry, final failure, and poison task test coverage
+> The goal is not to build a business application. The goal is to understand how backend systems behave **under retries, partial failures, stuck workers, and queue pressure** — and how to observe that behavior in practice.
 
 ---
 
-## Architecture
+## Project Identity
 
-```txt
-Browser Dashboard
-        |
-        v
-FastAPI API
-        |
-        +--> PostgreSQL
-        |       - tasks
-        |       - task logs
-        |       - worker heartbeats
-        |       - system state
-        |
-        +--> Redis
-        |       - task queue
-        |
-        +--> Prometheus
-        |       - scrapes /prometheus
-        |
-        +--> OpenTelemetry
-                - exports API traces to Jaeger
+Failure Playground is currently a **feature-complete local backend/platform engineering playground** focused on distributed worker systems, observability, and failure handling.
 
-Workers
-        |
-        +--> Redis
-        |       - consume queued task IDs
-        |
-        +--> PostgreSQL
-        |       - update task status
-        |       - write task logs
-        |       - write heartbeat state
-        |
-        +--> OpenTelemetry
-                - exports worker traces to Jaeger
+The current version includes:
 
-Grafana
-        |
-        +--> Prometheus datasource
+- Redis-backed task queues
+- Worker retry / recovery systems
+- Structured logging
+- Prometheus + Grafana metrics
+- OpenTelemetry + Jaeger tracing
+- Dockerized local infrastructure
+- CI validation
 
-Jaeger
-        |
-        +--> API traces
-        +--> Worker traces
+---
 
-## Components
+## What This Project Explores
 
-### Frontend
+This project is built to explore real backend operational concerns, not CRUD APIs:
 
-The dashboard is intentionally simple and operationally focused.
+- Worker coordination and lifecycle
+- Retry strategies and backoff
+- Stuck task recovery
+- Queue pressure and backpressure behavior
+- Poison task handling
+- Heartbeat-based liveness tracking
+- Structured operational logging
+- System-level metrics
+- Distributed tracing across services
+- Infrastructure debugging
+- Operational visibility
 
-- Vanilla JavaScript
-- HTML / CSS
-- Chart.js visualizations
-- Polling-based dashboard updates
-- Task and log filtering
-- Pagination controls
+---
 
-The dashboard allows users to inspect system state without needing to query the API directly.
+## Core Stack
 
 ### Backend
 
@@ -101,56 +50,100 @@ The dashboard allows users to inspect system state without needing to query the 
 - SQLAlchemy
 - PostgreSQL
 - Redis
-- Pytest
 
-The API provides endpoints for tasks, logs, metrics, workers, alerts, system state, queue controls, health checks, and Prometheus metrics.
+### Infrastructure / Platform
 
-### Queue
+- Docker Compose
+- Prometheus
+- Grafana
+- OpenTelemetry
+- Jaeger
+- GitHub Actions CI
+- Alembic database migrations
 
-Redis is used as a list-based task queue. Task IDs are pushed into Redis when tasks are created. Worker processes consume task IDs independently and update persistent task state in PostgreSQL.
+---
 
-### Database
+## Architecture
 
-PostgreSQL stores persistent system state, including:
+```
+                           Browser (operational UI)
+                                    |
+                                    v
+                              FastAPI API
+                                    |
+        +---------------------------+---------------------------+
+        |                           |                           |
+        v                           v                           v
+   PostgreSQL                     Redis                     Prometheus
+   - tasks                        - task queue              - scrapes /prometheus
+   - task logs                                                    |
+   - worker heartbeats                                            v
+   - system state                                              Grafana
+        ^                           ^
+        |                           |
+        +---------- Workers --------+
+                       |
+                       +--> OpenTelemetry --> Jaeger
+                                                ^
+                                                |
+                          FastAPI API ----------+
+                          (API + worker traces)
+```
+
+The system has two independent process classes — the **API** and the **workers** — communicating through Redis (queue) and PostgreSQL (state), with Prometheus, Grafana, and Jaeger providing the observability plane.
+
+---
+
+## Backend Systems
+
+### Task Queue
+
+Redis is used as a list-based task queue. The API enqueues task IDs; workers consume them independently. PostgreSQL is the source of truth for task state — Redis is treated as a transport, not as state.
+
+This separation is intentional: it forces the system to handle the realistic case where the queue and the database can disagree (lost messages, double-claims, stuck rows).
+
+### Persistence
+
+PostgreSQL stores:
 
 - Task status, retry count, timestamps
-- Failure reason, poison-task flags
+- Failure reason and poison-task flags
 - Task logs
 - Worker heartbeat records
 - System pause/resume state
 
-### Workers
+Schema is managed through Alembic migrations, which run automatically on API container startup.
 
-Independent background worker processes:
+### API Surface
+
+The FastAPI service exposes endpoints for task creation, queue inspection, worker state, alerts, system controls, logs, health, and metrics. It is the control plane — workers do not expose HTTP.
+
+---
+
+## Worker Coordination
+
+Workers are the heart of the project. They run as independent processes and are responsible for the actual task lifecycle.
+
+### Responsibilities
 
 - Pull task IDs from Redis
-- Claim queued tasks
-- Mark tasks as processing
-- Simulate success or failure
-- Retry failed tasks
-- Mark poison tasks as failed
-- Write task logs
-- Update heartbeat records
+- Claim queued tasks (transition `queued → processing`)
+- Simulate success, failure, or retry
+- Apply exponential backoff for retries
+- Detect and mark poison tasks as permanently failed
+- Write structured task logs
+- Emit heartbeat updates
 
----
+### Reliability Behaviors
 
-## System Flow
+- **Heartbeats** — workers periodically update a heartbeat row; stale workers are flagged as `stale`.
+- **Stuck task recovery** — tasks left in `processing` past a timeout are recovered and re-queued or failed.
+- **Retry cooldowns** — retries are scheduled, not immediate, to prevent tight failure loops.
+- **Rate limiting** — workers throttle to avoid hammering downstream systems.
+- **Processing timeouts** — long-running tasks are detected and handled.
+- **Processing duration tracking** — measured per task for observability.
 
-1. A user creates a task from the dashboard or API.
-2. FastAPI stores the task in PostgreSQL.
-3. FastAPI pushes the task ID into Redis.
-4. A worker pulls the task ID from Redis.
-5. The worker updates the task status to `processing`.
-6. The worker either succeeds, fails, or retries the task.
-7. The dashboard polls API endpoints and displays the current system state.
-8. Prometheus scrapes `/prometheus`.
-9. Grafana visualizes system metrics.
-
----
-
-## Failure Scenarios
-
-This project intentionally supports failure cases such as:
+### Failure Scenarios Supported
 
 - Random task failure
 - Retry with backoff
@@ -160,52 +153,68 @@ This project intentionally supports failure cases such as:
 - Stale workers
 - Duplicate task prevention
 - System pause/resume
-- Redis queue clearing
+- Manual Redis queue clearing
 - Degraded dependency health
 
 ---
 
 ## Observability
 
-Failure Playground includes multiple layers of observability.
-
-### OpenTelemetry Tracing
-
-Failure Playground includes OpenTelemetry tracing with Jaeger as a v1.5 observability upgrade. The project now supports:
-
-```
-logs + metrics + dashboards + traces
-```
-
-Tracing answers a different question from logs and metrics:
+Failure Playground treats observability as a first-class concern, with three layers covering different questions:
 
 | Layer   | Question it answers                         |
 |---------|---------------------------------------------|
 | Logs    | What happened?                              |
 | Metrics | How often / how much?                       |
-| Tracing | How did one task move through the system?   |
+| Tracing | How did one task move through the system?  |
 
-### Jaeger
+### Structured Logging
 
-Jaeger runs as part of Docker Compose.
+The backend emits structured JSON logs for:
 
-- Jaeger UI: <http://localhost:16686>
+- Task lifecycle events
+- Worker behavior
+- Retry activity
+- Failure handling
+- Heartbeat updates
 
-Currently traced services:
+Logs are designed to be machine-parseable and queryable, not human-decorative.
+
+### Metrics (Prometheus + Grafana)
+
+`/prometheus` exposes metrics in Prometheus text format:
+
+- `failure_playground_tasks_queued`
+- `failure_playground_tasks_processing`
+- `failure_playground_tasks_success`
+- `failure_playground_tasks_failed`
+- `failure_playground_tasks_poison`
+- `failure_playground_tasks_poison_failed`
+- `failure_playground_redis_queue_length`
+- `failure_playground_workers_alive`
+- `failure_playground_workers_stale`
+
+Grafana is provisioned through Docker Compose with a Prometheus datasource and a preconfigured dashboard visualizing queue pressure, worker health, failure rates, retry behavior, and processing throughput.
+
+### Distributed Tracing (OpenTelemetry + Jaeger)
+
+Tracing was added in v1.5 to inspect the lifecycle of individual tasks — something logs and metrics can't show directly.
+
+Traced services:
 
 - `failure-playground-api`
 - `failure-playground-worker`
 
-### Worker Traces
+Custom worker spans:
 
-The worker emits custom spans for task processing:
-
-- `worker.process_task`
-- `worker.claim_task`
-- `worker.retry_task`
-- `worker.fail_task`
-- `worker.complete_task`
-- `worker.recover_stuck_task`
+```
+worker.process_task
+worker.claim_task
+worker.retry_task
+worker.fail_task
+worker.complete_task
+worker.recover_stuck_task
+```
 
 #### Successful task flow
 
@@ -231,88 +240,26 @@ worker.process_task
   └── worker.fail_task
 ```
 
-### Why Tracing Was Added
+Worker polling itself is intentionally not heavily traced — empty queue polls would dominate Jaeger and obscure the meaningful task-processing spans.
 
-Prometheus and Grafana show system-level behavior such as queue size, task counts, worker status, and failure rates. Tracing shows the **lifecycle of an individual task**.
-
-This is especially useful for debugging:
-
-- Retry behavior
-- Failed tasks
-- Stuck task recovery
-- Worker processing time
-- Queue-to-worker flow
-- Unexpected worker exceptions
-
-### Local Setup
-
-Start the full stack:
-
-```bash
-docker compose up --build
-```
-
-Open Jaeger: <http://localhost:16686>
-
-Create tasks:
-
-```powershell
-iwr -UseBasicParsing -Method POST "http://localhost:8001/tasks?priority=1"
-```
-
-Then inspect traces such as `worker.process_task`.
-
-### Design Notes
-
-Worker polling itself is intentionally not heavily traced. The project traces meaningful task-processing operations instead of every empty queue poll. This keeps Jaeger cleaner and makes traces easier to inspect.
+Tracing is particularly useful for debugging retry behavior, stuck task recovery, worker processing time, queue-to-worker flow, and unexpected worker exceptions.
 
 ---
 
-## Dashboard
+## Operational Dashboard
 
-The dashboard displays:
+The browser dashboard is a **small operational tool**, not a product surface. It exists so the system can be poked at without curling the API.
+
+It displays:
 
 - Task status counts
 - Worker heartbeat state
 - Queue length
 - Alerts
 - Recent task logs
-- Task list with filters and pagination
-- Log list with filters and pagination
+- Task and log lists with filters and pagination
 
----
-
-## Structured Logging
-
-The backend emits structured JSON logs for important system events, including task creation, queue operations, worker lifecycle events, failures, and retries.
-
----
-
-## Prometheus
-
-The `/prometheus` endpoint exposes metrics in Prometheus text format.
-
-Example metrics:
-
-- `failure_playground_tasks_queued`
-- `failure_playground_tasks_processing`
-- `failure_playground_tasks_success`
-- `failure_playground_tasks_failed`
-- `failure_playground_tasks_poison`
-- `failure_playground_tasks_poison_failed`
-- `failure_playground_redis_queue_length`
-- `failure_playground_workers_alive`
-- `failure_playground_workers_stale`
-
----
-
-## Grafana
-
-Grafana is provisioned through Docker Compose with:
-
-- Prometheus datasource
-- Preconfigured dashboard
-- Local observability panels
+Implementation is intentionally minimal: vanilla JavaScript, HTML/CSS, Chart.js, and polling. Real observability lives in Grafana and Jaeger.
 
 ---
 
@@ -320,18 +267,18 @@ Grafana is provisioned through Docker Compose with:
 
 | Method | Endpoint         | Description                                 |
 |--------|------------------|---------------------------------------------|
-| GET    | `/`              | Dashboard                                   |
+| GET    | `/`              | Operational dashboard                       |
 | GET    | `/docs`          | FastAPI documentation                       |
 | GET    | `/health`        | API, database, and Redis health             |
 | GET    | `/metrics`       | Human-readable system metrics               |
 | GET    | `/prometheus`    | Prometheus scrape endpoint                  |
 | POST   | `/tasks`         | Create a normal task                        |
 | POST   | `/tasks/poison`  | Create a poison task                        |
-| GET    | `/tasks`         | Paginated and filterable task list          |
-| GET    | `/logs`          | Paginated and filterable task logs          |
+| GET    | `/tasks`         | Paginated, filterable task list             |
+| GET    | `/logs`          | Paginated, filterable task logs             |
 | GET    | `/workers`       | Worker heartbeat status                     |
 | GET    | `/alerts`        | Operational alerts                          |
-| GET    | `/system_state`  | Current system pause/resume state           |
+| GET    | `/system_state`  | Current pause/resume state                  |
 | POST   | `/pause`         | Pause task processing                       |
 | POST   | `/resume`        | Resume task processing                      |
 | POST   | `/clear_queue`   | Clear Redis queue                           |
@@ -351,10 +298,11 @@ When the API container starts, it runs Alembic migrations before launching the F
 
 Then open:
 
-- Dashboard: <http://localhost:8001>
 - API docs: <http://localhost:8001/docs>
+- Dashboard: <http://localhost:8001>
 - Prometheus: <http://localhost:9091>
 - Grafana: <http://localhost:3000>
+- Jaeger: <http://localhost:16686>
 
 Default Grafana login:
 
@@ -363,9 +311,15 @@ Username: admin
 Password: admin
 ```
 
+Create a task:
+
+```bash
+curl -X POST "http://localhost:8001/tasks?priority=1"
+```
+
 ---
 
-## Running Tests
+## Tests
 
 From the `backend` directory:
 
@@ -374,30 +328,15 @@ cd backend
 pytest -v
 ```
 
-The test suite covers:
+The test suite covers task creation, queue enqueue/dequeue, queue length and clear behavior, all major API endpoints, system pause/resume, pagination and filtering, query validation, structured logging behavior, and the worker recovery / success / retry / final failure / poison paths.
 
-- Task creation service
-- Queue enqueue / dequeue behavior
-- Queue length and clear behavior
-- `POST /tasks`, `POST /tasks/poison`
-- `GET /tasks`, `/metrics`, `/workers`, `/alerts`, `/logs`, `/prometheus`, `/health`
-- System pause/resume state
-- API pagination, filtering, and query validation
-- Structured logging behavior
-- Worker recovery, success, retry, final failure, and poison paths
-
-Tests use:
-
-- pytest
-- FastAPI TestClient
-- Temporary SQLite database
-- Fake Redis behavior for unit tests
+Tests use pytest, FastAPI TestClient, a temporary SQLite database, and fake Redis for unit tests.
 
 ---
 
 ## CI
 
-GitHub Actions runs the test suite automatically on push and pull request.
+GitHub Actions runs the test suite automatically on push and pull request:
 
 ```
 push / pull_request
@@ -411,44 +350,64 @@ run pytest
 
 ---
 
-## Current Limitations
+## Key Engineering Lessons
 
-This project is designed for local infrastructure learning, not production deployment.
+Building this project involved debugging several real operational and distributed-system problems:
 
-- Dashboard uses polling instead of WebSockets
-- No authentication or authorization yet
-- Alembic is configured, but migration history is still minimal because the project started with an existing schema
-- No Kubernetes deployment yet
-- No external deployment target yet
-- Frontend is intentionally simple
-- Historical metrics are handled by Prometheus/Grafana, not by a custom long-term analytics system
+- OpenTelemetry trace hierarchy issues
+- Noisy polling traces drowning out meaningful spans
+- Retry state loops
+- Docker volume state resets
+- PostgreSQL schema recreation across rebuilds
+- Worker coordination edge cases
+- Queue timing issues
+- Observability design tradeoffs (what to trace vs. what to leave alone)
 
----
-
-## Project Status
-
-Failure Playground is currently close to a strong **local v1** for a backend/platform engineering portfolio project.
-
-The system includes a working API, Redis-backed task queue, PostgreSQL persistence, multiple workers, retry/failure simulation, poison tasks, structured logs, dashboard controls, Prometheus metrics, Grafana provisioning, health checks, Docker Compose orchestration, and a passing test suite.
-
-The remaining work is mostly production hardening, documentation polish, and deployment-oriented improvements.
+The project evolved from a simple task queue into a broader platform engineering sandbox.
 
 ---
 
-## Next Milestones
+## Current Status
 
-- [ ] Add screenshots of the dashboard and Grafana panels
-- [ ] Add an architecture diagram image
-- [ ] Improve Alembic migration coverage
-- [ ] Improve worker test coverage
-- [x] Add OpenTelemetry tracing
-- [ ] Add Kubernetes manifests
-- [ ] Add deployment notes
-- [ ] Consider authentication and admin roles
-- [ ] Consider WebSocket-based live updates
+**Current version:** `v1.5`
 
+### Implemented
+
+- Backend API
+- Worker queue system
+- Retries and failure handling
+- Observability stack (logs + metrics + dashboards + traces)
+- Distributed tracing
+- Dockerized local infrastructure
+- CI validation
+
+### Current Limitations
+
+This project is designed for local platform engineering learning, not production deployment.
+
+- Polling-based dashboard (no WebSockets)
+- No authentication or authorization
+- Alembic migration history is minimal (project started with an existing schema)
+- No Kubernetes deployment
+- No external deployment target
+- Long-term analytics rely on Prometheus/Grafana retention, not a custom system
+
+---
+
+## Potential Future Expansions
+
+- Kubernetes manifests
+- Celery / Kafka comparison
+- Distributed locking
+- Autoscaling
+- Canary deployments
+- Authentication / RBAC
+- S3 backups
+- WebSocket live dashboard
+- Multi-service tracing beyond API + worker
 
 ## Screenshot
 
 ![Failure Playground dashboard](backend/dashboard.png)
 ![Failure Playground grafana](backend/grafana.png)
+![Failure Playground jaeger](backend/jaeger-worker-trace.png)
