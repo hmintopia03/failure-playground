@@ -357,7 +357,7 @@ The project traces meaningful task-processing operations instead of every empty 
 ```md
 ### Jaeger Worker Trace
 
-![Jaeger worker trace](docs/images/jaeger-worker-trace.png)
+![Jaeger worker trace](jaeger-worker-trace.png)
 ```
 
 Recommended screenshot path:
@@ -365,19 +365,6 @@ Recommended screenshot path:
 ```txt
 docs/images/jaeger-worker-trace.png
 ```
-
----
-
-## Suggested Git Commit
-
-```bash
-git add .
-git commit -m "docs: add OpenTelemetry tracing documentation"
-
-```
-### Jaeger Worker Trace
-
-![Jaeger worker trace](docs/images/jaeger-worker-trace.png)
 
 ---
 
