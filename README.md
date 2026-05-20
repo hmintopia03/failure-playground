@@ -37,7 +37,7 @@ It simulates a small infrastructure system with task queues, background workers,
 
 ## Architecture
 
-```
+```txt
 Browser Dashboard
         |
         v
@@ -53,7 +53,10 @@ FastAPI API
         |       - task queue
         |
         +--> Prometheus
-                - scrapes /prometheus
+        |       - scrapes /prometheus
+        |
+        +--> OpenTelemetry
+                - exports API traces to Jaeger
 
 Workers
         |
@@ -61,16 +64,21 @@ Workers
         |       - consume queued task IDs
         |
         +--> PostgreSQL
-                - update task status
-                - write task logs
-                - write heartbeat state
+        |       - update task status
+        |       - write task logs
+        |       - write heartbeat state
+        |
+        +--> OpenTelemetry
+                - exports worker traces to Jaeger
 
 Grafana
         |
         +--> Prometheus datasource
-```
 
----
+Jaeger
+        |
+        +--> API traces
+        +--> Worker traces
 
 ## Components
 
