@@ -3,6 +3,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    command: sh -c "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000"
     ports:
       - "8001:8000"
     volumes:
@@ -10,10 +11,14 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://app:app@postgres:5432/failure_playground
       ENVIRONMENT: docker-local
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+      OTEL_SERVICE_NAME: failure-playground-api
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_started
+      jaeger:
         condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -21,6 +26,8 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
+    
 
 
   worker-a:
@@ -31,6 +38,8 @@ services:
     environment:
       WORKER_NAME: worker-a
       DATABASE_URL: postgresql+psycopg2://app:app@postgres:5432/failure_playground
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+      OTEL_SERVICE_NAME: failure-playground-worker
     volumes:
       - ./backend:/app
     depends_on:
@@ -40,6 +49,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      jaeger:
+        condition: service_started
   worker-b:
     build:
       context: ./backend
@@ -48,6 +59,8 @@ services:
     environment:
       WORKER_NAME: worker-b
       DATABASE_URL: postgresql+psycopg2://app:app@postgres:5432/failure_playground
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+      OTEL_SERVICE_NAME: failure-playground-worker
     volumes:
       - ./backend:/app
     depends_on:
@@ -56,6 +69,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_started
+      jaeger:
         condition: service_started
   redis:
     image: redis:7
@@ -96,6 +111,13 @@ services:
       - ./grafana/dashboards:/var/lib/grafana/dashboards
     depends_on:
       - prometheus
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: failure-playground-jaeger
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+      - "4318:4318"
 
 volumes:
   postgres_data:

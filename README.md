@@ -192,6 +192,195 @@ This project intentionally supports failure cases such as:
 
 Failure Playground includes multiple layers of observability.
 
+## OpenTelemetry Tracing
+
+Failure Playground includes OpenTelemetry tracing with Jaeger as a v1.5 observability upgrade.
+
+The project now supports:
+
+```txt
+logs + metrics + dashboards + traces
+```
+
+Tracing helps answer a different question from logs and metrics:
+
+```txt
+Logs:      What happened?
+Metrics:   How often / how much?
+Tracing:   How did one task move through the system?
+```
+
+---
+
+## Jaeger
+
+Jaeger runs as part of Docker Compose.
+
+```txt
+Jaeger UI:
+http://localhost:16686
+```
+
+---
+
+## Traced Services
+
+Current traced services:
+
+```txt
+failure-playground-api
+failure-playground-worker
+```
+
+---
+
+## Worker Traces
+
+The worker emits custom spans for task processing:
+
+```txt
+worker.process_task
+worker.claim_task
+worker.retry_task
+worker.fail_task
+worker.complete_task
+worker.recover_stuck_task
+```
+
+---
+
+## Example Successful Task Flow
+
+```txt
+worker.process_task
+  ├── worker.claim_task
+  └── worker.complete_task
+```
+
+---
+
+## Example Retry Flow
+
+```txt
+worker.process_task
+  ├── worker.claim_task
+  └── worker.retry_task
+```
+
+---
+
+## Example Final Failure Flow
+
+```txt
+worker.process_task
+  ├── worker.claim_task
+  └── worker.fail_task
+```
+
+---
+
+## Why Tracing Was Added
+
+Prometheus and Grafana show system-level behavior, such as:
+
+- queue size
+- task counts
+- worker status
+- failure rates
+
+Tracing shows the lifecycle of an individual task.
+
+This is especially useful for debugging:
+
+- retry behavior
+- failed tasks
+- stuck task recovery
+- worker processing time
+- queue-to-worker flow
+- unexpected worker exceptions
+
+---
+
+## Local Setup
+
+Start the full stack:
+
+```bash
+docker compose up --build
+```
+
+Open Jaeger:
+
+```txt
+http://localhost:16686
+```
+
+Select a service:
+
+```txt
+failure-playground-api
+failure-playground-worker
+```
+
+Create tasks:
+
+```powershell
+iwr -UseBasicParsing -Method POST "http://localhost:8001/tasks?priority=1"
+```
+
+Then inspect traces such as:
+
+```txt
+worker.process_task
+```
+
+A normal successful trace should include:
+
+```txt
+worker.process_task
+  ├── worker.claim_task
+  └── worker.complete_task
+```
+
+---
+
+## Design Notes
+
+Worker polling itself is intentionally not heavily traced.
+
+The project traces meaningful task-processing operations instead of every empty queue poll. This keeps Jaeger cleaner and makes traces easier to inspect.
+
+---
+
+## Suggested Screenshot
+
+```md
+### Jaeger Worker Trace
+
+![Jaeger worker trace](docs/images/jaeger-worker-trace.png)
+```
+
+Recommended screenshot path:
+
+```txt
+docs/images/jaeger-worker-trace.png
+```
+
+---
+
+## Suggested Git Commit
+
+```bash
+git add .
+git commit -m "docs: add OpenTelemetry tracing documentation"
+
+```
+### Jaeger Worker Trace
+
+![Jaeger worker trace](docs/images/jaeger-worker-trace.png)
+
+---
+
 ### Dashboard
 
 The dashboard shows:

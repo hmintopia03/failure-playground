@@ -21,10 +21,43 @@ from services.task_service import create_task
 
 from fastapi.responses import FileResponse
 
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 app = FastAPI()
+
+def setup_tracing(app: FastAPI):
+    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+
+    if not endpoint:
+        return
+
+    resource = Resource.create({
+        "service.name": os.getenv(
+            "OTEL_SERVICE_NAME",
+            "failure-playground-api",
+        )
+    })
+
+    provider = TracerProvider(resource=resource)
+    processor = BatchSpanProcessor(
+        OTLPSpanExporter(endpoint=endpoint, insecure=True)
+    )
+
+    provider.add_span_processor(processor)
+    trace.set_tracer_provider(provider)
+
+    FastAPIInstrumentor.instrument_app(app)
+
+
+setup_tracing(app)
 
 app.mount(
     "/static",
@@ -51,10 +84,8 @@ from services.queue_service import (
     get_queue_length,
 )
 
-ENVIRONMENT = os.getenv("ENVIRONMENT", "local")
 
-if ENVIRONMENT != "test":
-    Base.metadata.create_all(bind=engine)
+ENVIRONMENT = os.getenv("ENVIRONMENT", "local")
 
 SYSTEM_VERSION = "0.1.0"
 SYSTEM_STARTED_AT = datetime.now(UTC)

@@ -24,8 +24,6 @@ if database_url:
 
 target_metadata = Base.metadata
 
-print("ALEMBIC TARGET METADATA:", target_metadata)
-print("ALEMBIC TABLES:", target_metadata.tables.keys())
 
 def run_migrations_offline():
     url = config.get_main_option("sqlalchemy.url")

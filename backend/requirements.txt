@@ -8,3 +8,7 @@ jinja2
 pytest
 httpx
 alembic
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-instrumentation-fastapi
+opentelemetry-exporter-otlp
