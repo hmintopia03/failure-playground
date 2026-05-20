@@ -355,7 +355,7 @@ The project traces meaningful task-processing operations instead of every empty 
 ##  Screenshot
 
 ![Jaeger worker trace](backend/jaeger-worker-trace.png)
-```
+
 ---
 
 ### Dashboard
