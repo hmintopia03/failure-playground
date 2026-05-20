@@ -352,20 +352,10 @@ The project traces meaningful task-processing operations instead of every empty 
 
 ---
 
-## Suggested Screenshot
+##  Screenshot
 
-```md
-### Jaeger Worker Trace
-
-![Jaeger worker trace](jaeger-worker-trace.png)
+![Jaeger worker trace](backend/jaeger-worker-trace.png)
 ```
-
-Recommended screenshot path:
-
-```txt
-docs/images/jaeger-worker-trace.png
-```
-
 ---
 
 ### Dashboard
