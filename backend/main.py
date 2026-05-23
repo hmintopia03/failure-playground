@@ -1,10 +1,13 @@
 import os
+import asyncio
+import json
+
 from collections import Counter
 from datetime import datetime, UTC, timezone
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Query, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi import Depends, FastAPI, Query, Request, WebSocket
+from fastapi.responses import HTMLResponse, PlainTextResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -18,8 +21,6 @@ from models import Alert, Task, TaskLog, WorkerHeartbeat
 from redis_client import redis_client
 from schemas import alert_to_dict, task_to_dict, worker_to_dict
 from services.task_service import create_task
-
-from fastapi.responses import FileResponse
 
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -794,3 +795,30 @@ def get_prometheus_metrics(db: Session = Depends(get_db)):
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon():
     return FileResponse(str(BASE_DIR / "static" / "favicon.svg"))
+
+@app.websocket("/ws/operations")
+async def operations_websocket(websocket: WebSocket):
+    await websocket.accept()
+
+    pubsub = redis_client.pubsub()
+    pubsub.subscribe("operations")
+
+    try:
+        while True:
+            message = pubsub.get_message(ignore_subscribe_messages=True)
+
+            if message:
+                data = message["data"]
+
+                if isinstance(data, bytes):
+                    data = data.decode("utf-8")
+
+                await websocket.send_text(data)
+
+            await asyncio.sleep(0.1)
+
+    except Exception as e:
+        print("websocket disconnected", e)
+
+    finally:
+        pubsub.close()

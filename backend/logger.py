@@ -1,7 +1,7 @@
 import json
 import logging
 from datetime import datetime, UTC
-
+from redis_client import redis_client
 
 logger = logging.getLogger("failure_playground")
 logger.setLevel(logging.INFO)
@@ -20,4 +20,8 @@ def log_event(event, **fields):
         **fields,
     }
 
-    logger.info(json.dumps(payload, default=str))
+
+    message = json.dumps(payload, default=str)
+
+    logger.info(message)
+    redis_client.publish("operations", message)

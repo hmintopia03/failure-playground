@@ -10,19 +10,128 @@ let logOffset = 0;
 let logLimit = 30;
 
 let taskTotal = 0;
+let liveEventFilter = "all"
+let isLiveStreamPaused = false
+
+let liveEventTotal = 0
+let liveEventFailures = 0
+let liveEventRetries = 0
+
+let liveEventSearchQuery = ""
+
+const liveEventsContainer = document.getElementById("live-events")
+const wsStatus = document.getElementById("ws-status")
+const liveWorkersContainer = document.getElementById("live-workers")
+const createTaskBtn = document.getElementById("create-task-btn")
+const liveEventFilterButtons = document.querySelectorAll("#live-event-filters button")
+const pauseLiveEventsBtn = document.getElementById("pause-live-events-btn")
+
+const liveEventTotalEl = document.getElementById("live-event-total")
+const liveEventFailuresEl = document.getElementById("live-event-failures")
+const liveEventRetriesEl = document.getElementById("live-event-retries")
+
+const toastContainer = document.getElementById("toast-container")
+const recentFailures = []
+const failureSpikeAlert = document.getElementById( "failure-spike-alert")
+const acknowledgeAlertBtn =document.getElementById("acknowledge-alert-btn")
+const incidentHistoryContainer = document.getElementById("incident-history")
+
+const throughputPoints = []
+const throughputCtx =document.getElementById("throughput-chart").getContext("2d")
+const liveWorkerLastSeen = {}
+const reportedStaleWorkers = new Set()
+const recoveredWorkers = new Set()
+
+const eventDetailDrawer = document.getElementById("event-detail-drawer")
+const eventDetailContent = document.getElementById("event-detail-content")
+const closeEventDetailBtn = document.getElementById("close-event-detail-btn")
+const liveEventSearchInput = document.getElementById("live-event-search")
+const clearLiveEventsBtn = document.getElementById("clear-live-events-btn")
+const clearIncidentHistoryBtn = document.getElementById("clear-incident-history-btn")
+
+const throughputChart = new Chart(
+  throughputCtx,
+  {
+    type: "line",
+
+    data: {
+      labels: [],
+
+      datasets: [
+        {
+          label: "Tasks/sec",
+          data: [],
+        },
+      ],
+    },
+
+    options: {
+      responsive: true,
+      animation: false,
+    },
+  }
+)
+
+liveEventFilterButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    liveEventFilter = button.dataset.filter
+  })
+})
+
+pauseLiveEventsBtn.addEventListener("click", () => {
+  isLiveStreamPaused = !isLiveStreamPaused
+
+  pauseLiveEventsBtn.textContent = isLiveStreamPaused
+    ? "Resume Live Stream"
+    : "Pause Live Stream"
+})
+acknowledgeAlertBtn.addEventListener(
+  "click",
+  () => {
+    failureSpikeAlert.classList.add("hidden")
+  }
+)
+
+liveEventSearchInput.addEventListener(
+  "input",
+  (e) => {
+    liveEventSearchQuery =
+      e.target.value.toLowerCase()
+
+    applyLiveEventSearchFilter()
+  }
+)
+
+clearLiveEventsBtn.addEventListener("click", () => {
+  liveEventsContainer.innerHTML = ""
+
+  liveEventTotal = 0
+  liveEventFailures = 0
+  liveEventRetries = 0
+
+  liveEventTotalEl.textContent = "0"
+  liveEventFailuresEl.textContent = "0"
+  liveEventRetriesEl.textContent = "0"
+})
+
+clearIncidentHistoryBtn.addEventListener("click", () => {
+  incidentHistoryContainer.innerHTML = ""
+})
+
 
 
 function setFilter(status) {
 currentFilter = status;
 loadTasks();
 }
+
 function formatUptime(seconds) {
 const hours = Math.floor(seconds / 3600);
 const minutes = Math.floor((seconds % 3600) / 60);
 const secs = seconds % 60;
-
 return `${hours}h ${minutes}m ${secs}s`;
 }
+
 function toggleDarkMode() {
 document.body.classList.toggle("dark-mode");
 
@@ -31,6 +140,7 @@ const isDarkMode =
 
 localStorage.setItem("darkMode", isDarkMode);
 }
+
 function showActionStatus(message) {
 const el = document.getElementById("action-status");
 
@@ -40,6 +150,7 @@ setTimeout(() => {
     el.innerHTML = "";
 }, 3000);
 }
+
 function setDangerButtonsDisabled(disabled) {
 document
     .querySelectorAll(".danger-action")
@@ -239,6 +350,7 @@ async function loadLogs() {
             `Showing ${start}-${end} of ${data.total} logs`;
     }
 }
+
 function clearLogFilter() {
     const taskIdFilter = document.getElementById("log-task-id-filter");
 
@@ -248,6 +360,7 @@ function clearLogFilter() {
 
     loadLogs();
 }
+
 async function retryTask(taskId) {
 await fetch(`/tasks/${taskId}/retry`, {
     method: "POST"
@@ -273,6 +386,7 @@ async function resumeSystem() {
 await fetch("/resume", { method: "POST" });
 await refresh();
 }
+
 async function loadSystemState() {
 const configResponse = await fetch("/config");
 const configData = await configResponse.json();
@@ -684,3 +798,365 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 });
+
+const ws = new WebSocket(`ws://${window.location.host}/ws/operations`)
+
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data)
+
+  if (data.event === "worker_heartbeat") {
+    renderLiveWorker(data)
+    return
+  }
+
+  appendLiveEvent(data)
+}
+
+ws.addEventListener("open", () => {
+  console.log("WS OPEN")
+
+  wsStatus.textContent = "connected"
+  wsStatus.className = "ws-connected"
+})
+
+ws.onerror = () => {
+  wsStatus.textContent = "error"
+  wsStatus.className = "ws-error"
+}
+
+ws.onclose = () => {
+  wsStatus.textContent = "disconnected"
+  wsStatus.className = "ws-disconnected"
+}
+
+function renderLiveWorker(data) {
+  const id = `live-worker-${data.worker_name}`
+
+  let item = document.getElementById(id)
+
+  liveWorkerLastSeen[data.worker_name] = Date.now()
+
+  if (!item) {
+    item = document.createElement("div")
+    item.id = id
+    item.className = "live-worker"
+    liveWorkersContainer.appendChild(item)
+  }
+
+  item.textContent =
+  `${data.worker_name} | healthy | processed=${data.processed_count}`
+}
+
+function appendLiveEvent(data) {
+  if (isLiveStreamPaused) {
+    return
+  }
+
+    if (!shouldShowLiveEvent(data)) {
+    return
+    }
+
+    if (!matchesLiveEventSearch(data)) {
+    return
+    }
+
+  const item = document.createElement("div")
+  const severity = getEventSeverity(data)
+  item.dataset.searchText = JSON.stringify(data).toLowerCase()
+  item.className =`live-event severity-${severity}`
+  item.textContent = formatEvent(data)
+  item.addEventListener("click", () => {
+    eventDetailContent.textContent = JSON.stringify(data, null, 2)
+    eventDetailDrawer.classList.remove("hidden")
+    })
+    closeEventDetailBtn.addEventListener("click", () => {
+    eventDetailDrawer.classList.add("hidden")
+    })
+  liveEventsContainer.prepend(item)
+
+  if (liveEventsContainer.children.length > 50) {
+    liveEventsContainer.removeChild(liveEventsContainer.lastChild)
+  }
+
+  if (data.event.includes("failed") || data.event.includes("poison")) {
+    const message = formatEvent(data)
+    showToast(message)
+    addIncident(message)
+  }
+
+    if (data.event === "task_succeeded") {
+    recordThroughputSuccess()
+    }
+
+  updateLiveEventStats(data)
+  detectFailureSpike(data)
+}
+createTaskBtn.addEventListener("click", async () => {
+  const response = await fetch("/tasks?priority=1", {
+    method: "POST",
+  })
+
+  if (!response.ok) {
+    console.error("Failed to create task")
+    return
+  }
+
+  const task = await response.json()
+  console.log("created task", task)
+})
+
+function formatEvent(data) {
+  switch (data.event) {
+    case "task_created":
+      return `Task #${data.task_id} created`
+
+    case "task_enqueued":
+      return `Task #${data.task_id} enqueued`
+
+    case "task_started":
+      return `${data.worker_name} started task #${data.task_id}`
+
+    case "task_succeeded":
+      return `${data.worker_name} completed task #${data.task_id}`
+
+    case "task_failed":
+      return `${data.worker_name} failed task #${data.task_id}`
+
+    case "task_retried":
+      return `Retry scheduled for task #${data.task_id}`
+
+    case "task_claimed":
+        return `${data.worker_name} claimed task #${data.task_id}`
+
+    case "task_not_ready_for_retry":
+        return `Task #${data.task_id} waiting for retry`
+
+    case "worker_processed_count_updated":
+        return `${data.worker_name} processed count = ${data.processed_count}`
+
+    case "task_poisoned":
+        return `Task #${data.task_id} became poison after retries`
+
+    default:
+      return JSON.stringify(data)
+  }
+}
+function shouldShowLiveEvent(data) {
+  if (liveEventFilter === "all") return true
+
+  if (liveEventFilter === "task") {
+    return data.event.startsWith("task_")
+  }
+
+  if (liveEventFilter === "failure") {
+    return data.event.includes("failed") || data.event.includes("poison")
+  }
+
+  if (liveEventFilter === "retry") {
+    return data.event.includes("retry")
+  }
+
+  if (liveEventFilter === "worker") {
+    return data.event.startsWith("worker_")
+  }
+
+  return true
+}
+function updateLiveEventStats(data) {
+  liveEventTotal += 1
+
+  if (data.event.includes("failed") || data.event.includes("poison")) {
+    liveEventFailures += 1
+  }
+
+  if (data.event.includes("retry")) {
+    liveEventRetries += 1
+  }
+
+  liveEventTotalEl.textContent = liveEventTotal
+  liveEventFailuresEl.textContent = liveEventFailures
+  liveEventRetriesEl.textContent = liveEventRetries
+}
+
+function showToast(message) {
+  const toast = document.createElement("div")
+  toast.className = "toast"
+  toast.textContent = message
+
+  toastContainer.appendChild(toast)
+
+  setTimeout(() => {
+    toast.remove()
+  }, 4000)
+}
+
+function detectFailureSpike(data) {
+  if (
+    !data.event.includes("failed") &&
+    !data.event.includes("poison")
+  ) {
+    return
+  }
+
+  const now = Date.now()
+
+  recentFailures.push(now)
+
+  const windowMs = 10_000
+
+  while (
+    recentFailures.length > 0 &&
+    now - recentFailures[0] > windowMs
+  ) {
+    recentFailures.shift()
+  }
+
+  if (recentFailures.length >= 5) {
+    triggerFailureSpikeAlert()
+  }
+}
+
+function triggerFailureSpikeAlert() {
+  failureSpikeAlert.classList.remove("hidden")
+  addIncident("Failure spike detected")
+}  
+
+function addIncident(message) {
+  const item = document.createElement("div")
+  item.className = "incident-history-item"
+
+  const time = new Date().toLocaleTimeString()
+
+  item.textContent = `${time} | ${message}`
+
+  incidentHistoryContainer.prepend(item)
+
+  if (incidentHistoryContainer.children.length > 20) {
+    incidentHistoryContainer.removeChild(
+      incidentHistoryContainer.lastChild
+    )
+  }
+}
+function recordThroughputSuccess() {
+  throughputPoints.push(Date.now())
+}
+
+function updateThroughputChart() {
+  const now = Date.now()
+  const windowMs = 60_000
+
+  while (
+    throughputPoints.length > 0 &&
+    now - throughputPoints[0] > windowMs
+  ) {
+    throughputPoints.shift()
+  }
+
+  throughputChart.data.labels.push(
+    new Date().toLocaleTimeString()
+  )
+
+  throughputChart.data.datasets[0].data.push(
+    throughputPoints.length
+  )
+
+  if (throughputChart.data.labels.length > 30) {
+    throughputChart.data.labels.shift()
+    throughputChart.data.datasets[0].data.shift()
+  }
+
+  throughputChart.update()
+}
+
+function updateWorkerHealth() {
+  const now = Date.now()
+
+  Object.entries(liveWorkerLastSeen).forEach(([workerName, lastSeen]) => {
+    const item = document.getElementById(`live-worker-${workerName}`)
+
+    if (!item) return
+
+    const isStale = now - lastSeen > 5000
+
+    if (isStale && !reportedStaleWorkers.has(workerName)) {
+        reportedStaleWorkers.add(workerName)
+
+        const message = `${workerName} became stale`
+
+        addIncident(message)
+        showToast(message)
+
+        console.log("STALE DETECTED", workerName)
+        showToast("test toast")
+    }
+
+    if (!isStale) {
+        if (reportedStaleWorkers.has(workerName)) {
+            const message = `${workerName} recovered`
+
+            addIncident(message)
+            showToast(message)
+
+            reportedStaleWorkers.delete(workerName)
+        }
+    }
+
+    item.classList.toggle("worker-stale", isStale)
+    item.classList.toggle("worker-healthy", !isStale)
+  })
+}
+
+function getEventSeverity(data) {
+  const event = data.event
+
+  if (event.includes("poison")) {
+    return "critical"
+  }
+
+  if (
+    event.includes("failed") ||
+    event.includes("stale")
+  ) {
+    return "error"
+  }
+
+  if (
+    event.includes("retry")
+  ) {
+    return "warning"
+  }
+
+  return "info"
+}
+
+function matchesLiveEventSearch(data) {
+  if (!liveEventSearchQuery) {
+    return true
+  }
+
+  const text =
+    JSON.stringify(data).toLowerCase()
+
+  return text.includes(
+    liveEventSearchQuery
+  )
+}
+
+function applyLiveEventSearchFilter() {
+  const items =
+    document.querySelectorAll(".live-event")
+
+  items.forEach((item) => {
+    const matches =
+      item.dataset.searchText.includes(
+        liveEventSearchQuery
+      )
+
+    item.style.display =
+      matches ? "" : "none"
+  })
+}
+
+
+setInterval(updateWorkerHealth, 1000)
+setInterval(updateThroughputChart, 1000)

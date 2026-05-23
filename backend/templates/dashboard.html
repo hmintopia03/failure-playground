@@ -24,6 +24,14 @@
         <button onclick="refresh()">Refresh Now</button>
     </div>
 
+    <div id="toast-container"></div>
+    <div id="failure-spike-alert" class="hidden">
+        <span>FAILURE SPIKE DETECTED</span>
+
+        <button id="acknowledge-alert-btn">
+            Acknowledge
+        </button>
+    </div>
 
     <h1>Failure Playground</h1>
 
@@ -39,6 +47,51 @@
     <h2>Metrics</h2>
     <pre id="metrics" class="debug-only" >Loading...</pre>
     <div id="metrics-cards" class="cards"></div>
+    <section class="panel">
+        <h2>Realtime Throughput</h2>
+
+        <canvas id="throughput-chart"></canvas>
+    </section>
+    <section class="panel">
+        <h2>Live Workers</h2>
+        <div id="live-workers"></div>
+    </section>
+    <section class="panel">
+        <input id="live-event-search" type="text" placeholder="Search live events..."/>
+        <h2>
+            Live Events
+            <span id="ws-status">connecting...</span>
+        </h2>
+        
+        <div id="live-event-filters">
+            <button data-filter="all">All</button>
+            <button data-filter="task">Tasks</button>
+            <button data-filter="failure">Failures</button>
+            <button data-filter="retry">Retries</button>
+            <button data-filter="worker">Workers</button>
+            <button id="pause-live-events-btn">Pause Live Stream</button>
+            <button id="clear-live-events-btn">Clear Live Events</button>
+            <button id="clear-live-events-btn">Clear Live Events</button>
+        </div>
+
+        <div id="live-event-stats">
+        Total: <span id="live-event-total">0</span>
+        |
+        Failures: <span id="live-event-failures">0</span>
+        |
+        Retries: <span id="live-event-retries">0</span>
+        </div>
+            <section class="panel">
+            <h2>Incident History</h2>
+            <div id="incident-history"></div>
+        </section>
+        <div id="live-events"></div>
+        <div id="event-detail-drawer" class="hidden">
+        <button id="close-event-detail-btn">Close</button>
+        <h2>Event Detail</h2>
+        <pre id="event-detail-content"></pre>
+        </div>
+    </section>
 
     <div class="chart-container">
         <canvas id="task-chart"></canvas>
@@ -67,6 +120,7 @@
         <button onclick="createTask(0)">Create High Priority</button>
         <button onclick="createTask(1)">Create Normal Priority</button>
         <button onclick="createTask(2)">Create Low Priority</button>
+        <button id="create-task-btn">Create Task</button>
     </div>
 
     <button class="danger-action" onclick="createPoisonTask()">Create Poison Task</button>
