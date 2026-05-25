@@ -37,7 +37,7 @@ const acknowledgeAlertBtn =document.getElementById("acknowledge-alert-btn")
 const incidentHistoryContainer = document.getElementById("incident-history")
 
 const throughputPoints = []
-const throughputCtx =document.getElementById("throughput-chart").getContext("2d")
+const throughputCanvas = document.getElementById("throughput-chart")
 const liveWorkerLastSeen = {}
 const reportedStaleWorkers = new Set()
 const recoveredWorkers = new Set()
@@ -49,9 +49,12 @@ const liveEventSearchInput = document.getElementById("live-event-search")
 const clearLiveEventsBtn = document.getElementById("clear-live-events-btn")
 const clearIncidentHistoryBtn = document.getElementById("clear-incident-history-btn")
 
-const throughputChart = new Chart(
-  throughputCtx,
-  {
+let throughputChart = null
+
+if (throughputCanvas) {
+  const throughputCtx = throughputCanvas.getContext("2d")
+
+  throughputChart = new Chart(throughputCtx, {
     type: "line",
 
     data: {
@@ -69,56 +72,8 @@ const throughputChart = new Chart(
       responsive: true,
       animation: false,
     },
-  }
-)
-
-liveEventFilterButtons.forEach((button) => {
-  button.addEventListener("click", () => {
-    liveEventFilter = button.dataset.filter
   })
-})
-
-pauseLiveEventsBtn.addEventListener("click", () => {
-  isLiveStreamPaused = !isLiveStreamPaused
-
-  pauseLiveEventsBtn.textContent = isLiveStreamPaused
-    ? "Resume Live Stream"
-    : "Pause Live Stream"
-})
-acknowledgeAlertBtn.addEventListener(
-  "click",
-  () => {
-    failureSpikeAlert.classList.add("hidden")
-  }
-)
-
-liveEventSearchInput.addEventListener(
-  "input",
-  (e) => {
-    liveEventSearchQuery =
-      e.target.value.toLowerCase()
-
-    applyLiveEventSearchFilter()
-  }
-)
-
-clearLiveEventsBtn.addEventListener("click", () => {
-  liveEventsContainer.innerHTML = ""
-
-  liveEventTotal = 0
-  liveEventFailures = 0
-  liveEventRetries = 0
-
-  liveEventTotalEl.textContent = "0"
-  liveEventFailuresEl.textContent = "0"
-  liveEventRetriesEl.textContent = "0"
-})
-
-clearIncidentHistoryBtn.addEventListener("click", () => {
-  incidentHistoryContainer.innerHTML = ""
-})
-
-
+}
 
 function setFilter(status) {
 currentFilter = status;
@@ -186,7 +141,6 @@ function nextLogPage() {
     logOffset += logLimit;
     loadLogs();
 }
-
 
 function applyTaskFilters() {
     taskOffset = 0;
@@ -315,7 +269,6 @@ async function loadLogs() {
     const data = await fetchJson(`/logs?${params.toString()}`);
     const logs = Array.isArray(data) ? data : data.items;
     logTotal = Array.isArray(data) ? logs.length : data.total;
-
 
     const html = logs
         .map(log => {
@@ -750,12 +703,6 @@ function startRefreshTimer() {
     }, interval);
 }
 
-document
-    .getElementById("refresh-interval")
-    .addEventListener("change", startRefreshTimer);
-
-startRefreshTimer();
-
 function formatAge(seconds) {
     if (seconds < 60) {
         return `${seconds}s`;
@@ -777,27 +724,112 @@ async function fetchJson(url) {
     return response.json();
 }
 
+function initializeDashboardEventListeners() {
+  // Live event filter buttons
+  liveEventFilterButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      liveEventFilter = button.dataset.filter
+    })
+  })
+
+  if (pauseLiveEventsBtn) {
+    pauseLiveEventsBtn.addEventListener("click", () => {
+      isLiveStreamPaused = !isLiveStreamPaused
+
+      pauseLiveEventsBtn.textContent = isLiveStreamPaused
+        ? "Resume Live Stream"
+        : "Pause Live Stream"
+    })
+  }
+
+  if (acknowledgeAlertBtn && failureSpikeAlert) {
+    acknowledgeAlertBtn.addEventListener("click", () => {
+      failureSpikeAlert.classList.add("hidden")
+    })
+  }
+
+  if (liveEventSearchInput) {
+    liveEventSearchInput.addEventListener("input", (e) => {
+      liveEventSearchQuery = e.target.value.toLowerCase()
+      applyLiveEventSearchFilter()
+    })
+  }
+
+  if (clearLiveEventsBtn) {
+    clearLiveEventsBtn.addEventListener("click", () => {
+      liveEventsContainer.innerHTML = ""
+
+      liveEventTotal = 0
+      liveEventFailures = 0
+      liveEventRetries = 0
+
+      if (liveEventTotalEl) liveEventTotalEl.textContent = "0"
+      if (liveEventFailuresEl) liveEventFailuresEl.textContent = "0"
+      if (liveEventRetriesEl) liveEventRetriesEl.textContent = "0"
+    })
+  }
+
+  if (clearIncidentHistoryBtn) {
+    clearIncidentHistoryBtn.addEventListener("click", () => {
+      incidentHistoryContainer.innerHTML = ""
+    })
+  }
+
+  if (closeEventDetailBtn && eventDetailDrawer) {
+    closeEventDetailBtn.addEventListener("click", () => {
+      eventDetailDrawer.classList.add("hidden")
+    })
+  }
+
+  if (createTaskBtn) {
+    createTaskBtn.addEventListener("click", async () => {
+      const response = await fetch("/tasks?priority=1", {
+        method: "POST",
+      })
+
+      if (!response.ok) {
+        console.error("Failed to create task")
+        return
+      }
+
+      await response.json()
+    })
+  }
+
+  // Task / log filter listeners (formerly in DOMContentLoaded)
+  const statusFilter = document.getElementById("task-status-filter")
+  const poisonFilter = document.getElementById("task-poison-filter")
+  const logTaskIdFilter = document.getElementById("log-task-id-filter")
+
+  if (statusFilter) {
+    statusFilter.addEventListener("change", loadTasks)
+  }
+
+  if (poisonFilter) {
+    poisonFilter.addEventListener("change", loadTasks)
+  }
+
+  if (logTaskIdFilter) {
+    logTaskIdFilter.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        loadLogs()
+      }
+    })
+  }
+
+  // Refresh interval control
+  const refreshIntervalEl = document.getElementById("refresh-interval")
+
+  if (refreshIntervalEl) {
+    refreshIntervalEl.addEventListener("change", startRefreshTimer)
+  }
+
+  startRefreshTimer()
+}
+
 document.addEventListener("DOMContentLoaded", () => {
-    const statusFilter = document.getElementById("task-status-filter");
-    const poisonFilter = document.getElementById("task-poison-filter");
-    const logTaskIdFilter = document.getElementById("log-task-id-filter");
-
-    if (statusFilter) {
-        statusFilter.addEventListener("change", loadTasks);
-    }
-
-    if (poisonFilter) {
-        poisonFilter.addEventListener("change", loadTasks);
-    }
-
-    if (logTaskIdFilter) {
-        logTaskIdFilter.addEventListener("keydown", event => {
-            if (event.key === "Enter") {
-                loadLogs();
-            }
-        });
-    }
-});
+  initializeDashboardEventListeners()
+})
 
 const ws = new WebSocket(`ws://${window.location.host}/ws/operations`)
 
@@ -813,8 +845,6 @@ ws.onmessage = (event) => {
 }
 
 ws.addEventListener("open", () => {
-  console.log("WS OPEN")
-
   wsStatus.textContent = "connected"
   wsStatus.className = "ws-connected"
 })
@@ -860,19 +890,18 @@ function appendLiveEvent(data) {
     return
     }
 
-  const item = document.createElement("div")
+  const eventCard = document.createElement("div")
   const severity = getEventSeverity(data)
-  item.dataset.searchText = JSON.stringify(data).toLowerCase()
-  item.className =`live-event severity-${severity}`
-  item.textContent = formatEvent(data)
-  item.addEventListener("click", () => {
+  eventCard.dataset.searchText = JSON.stringify(data).toLowerCase()
+  eventCard.className =`live-event severity-${severity}`
+  eventCard.textContent = formatEvent(data)
+  eventCard.addEventListener("click", () => {
+    if (!eventDetailDrawer || !eventDetailContent) return
+
     eventDetailContent.textContent = JSON.stringify(data, null, 2)
     eventDetailDrawer.classList.remove("hidden")
     })
-    closeEventDetailBtn.addEventListener("click", () => {
-    eventDetailDrawer.classList.add("hidden")
-    })
-  liveEventsContainer.prepend(item)
+  liveEventsContainer.prepend(eventCard)
 
   if (liveEventsContainer.children.length > 50) {
     liveEventsContainer.removeChild(liveEventsContainer.lastChild)
@@ -891,20 +920,6 @@ function appendLiveEvent(data) {
   updateLiveEventStats(data)
   detectFailureSpike(data)
 }
-createTaskBtn.addEventListener("click", async () => {
-  const response = await fetch("/tasks?priority=1", {
-    method: "POST",
-  })
-
-  if (!response.ok) {
-    console.error("Failed to create task")
-    return
-  }
-
-  const task = await response.json()
-  console.log("created task", task)
-})
-
 function formatEvent(data) {
   switch (data.event) {
     case "task_created":
@@ -963,6 +978,10 @@ function shouldShowLiveEvent(data) {
   return true
 }
 function updateLiveEventStats(data) {
+  if (!liveEventTotalEl || !liveEventFailuresEl || !liveEventRetriesEl) {
+    return
+  }
+
   liveEventTotal += 1
 
   if (data.event.includes("failed") || data.event.includes("poison")) {
@@ -979,6 +998,8 @@ function updateLiveEventStats(data) {
 }
 
 function showToast(message) {
+  if (!toastContainer) return
+
   const toast = document.createElement("div")
   toast.className = "toast"
   toast.textContent = message
@@ -1017,11 +1038,15 @@ function detectFailureSpike(data) {
 }
 
 function triggerFailureSpikeAlert() {
+  if (!failureSpikeAlert) return
+
   failureSpikeAlert.classList.remove("hidden")
   addIncident("Failure spike detected")
 }  
 
 function addIncident(message) {
+  if (!incidentHistoryContainer) return
+
   const item = document.createElement("div")
   item.className = "incident-history-item"
 
@@ -1042,6 +1067,8 @@ function recordThroughputSuccess() {
 }
 
 function updateThroughputChart() {
+  if (!throughputChart) return
+
   const now = Date.now()
   const windowMs = 60_000
 
@@ -1079,26 +1106,21 @@ function updateWorkerHealth() {
     const isStale = now - lastSeen > 5000
 
     if (isStale && !reportedStaleWorkers.has(workerName)) {
-        reportedStaleWorkers.add(workerName)
+      reportedStaleWorkers.add(workerName)
 
-        const message = `${workerName} became stale`
+      const message = `${workerName} became stale`
 
-        addIncident(message)
-        showToast(message)
-
-        console.log("STALE DETECTED", workerName)
-        showToast("test toast")
+      addIncident(message)
+      showToast(message)
     }
 
-    if (!isStale) {
-        if (reportedStaleWorkers.has(workerName)) {
-            const message = `${workerName} recovered`
+    if (!isStale && reportedStaleWorkers.has(workerName)) {
+      const message = `${workerName} recovered`
 
-            addIncident(message)
-            showToast(message)
+      addIncident(message)
+      showToast(message)
 
-            reportedStaleWorkers.delete(workerName)
-        }
+      reportedStaleWorkers.delete(workerName)
     }
 
     item.classList.toggle("worker-stale", isStale)
@@ -1156,7 +1178,6 @@ function applyLiveEventSearchFilter() {
       matches ? "" : "none"
   })
 }
-
 
 setInterval(updateWorkerHealth, 1000)
 setInterval(updateThroughputChart, 1000)

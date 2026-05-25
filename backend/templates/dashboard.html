@@ -58,11 +58,12 @@
     </section>
     <section class="panel">
         <input id="live-event-search" type="text" placeholder="Search live events..."/>
+
         <h2>
             Live Events
             <span id="ws-status">connecting...</span>
         </h2>
-        
+
         <div id="live-event-filters">
             <button data-filter="all">All</button>
             <button data-filter="task">Tasks</button>
@@ -71,27 +72,30 @@
             <button data-filter="worker">Workers</button>
             <button id="pause-live-events-btn">Pause Live Stream</button>
             <button id="clear-live-events-btn">Clear Live Events</button>
-            <button id="clear-live-events-btn">Clear Live Events</button>
         </div>
 
         <div id="live-event-stats">
-        Total: <span id="live-event-total">0</span>
-        |
-        Failures: <span id="live-event-failures">0</span>
-        |
-        Retries: <span id="live-event-retries">0</span>
+            Total: <span id="live-event-total">0</span>
+            |
+            Failures: <span id="live-event-failures">0</span>
+            |
+            Retries: <span id="live-event-retries">0</span>
         </div>
-            <section class="panel">
-            <h2>Incident History</h2>
-            <div id="incident-history"></div>
-        </section>
+
         <div id="live-events"></div>
-        <div id="event-detail-drawer" class="hidden">
+    </section>
+
+    <section class="panel">
+        <h2>Incident History</h2>
+        <button id="clear-incident-history-btn">Clear Incident History</button>
+        <div id="incident-history"></div>
+    </section>
+
+    <div id="event-detail-drawer" class="hidden">
         <button id="close-event-detail-btn">Close</button>
         <h2>Event Detail</h2>
         <pre id="event-detail-content"></pre>
-        </div>
-    </section>
+    </div>
 
     <div class="chart-container">
         <canvas id="task-chart"></canvas>
@@ -115,12 +119,9 @@
     <div id="system-state">Loading...</div>
 
     <div class="controls">
-        <button class="danger-action" onclick="pauseSystem()">Pause</button>
-        <button class="danger-action" onclick="resumeSystem()">Resume</button>
         <button onclick="createTask(0)">Create High Priority</button>
         <button onclick="createTask(1)">Create Normal Priority</button>
         <button onclick="createTask(2)">Create Low Priority</button>
-        <button id="create-task-btn">Create Task</button>
     </div>
 
     <button class="danger-action" onclick="createPoisonTask()">Create Poison Task</button>
@@ -135,14 +136,6 @@
 
     <button class="danger-action" onclick="createBulkTasks(10)">Create 10 Tasks</button>
     <button class="danger-action" onclick="createBulkTasks(50)">Create 50 Tasks</button>
-    
-    <input type="text" id="task-search" placeholder="Search task ID..." oninput="loadTasks()"/>
-    <select id="task-sort" onchange="loadTasks()">
-        <option value="id-asc">Oldest first</option>
-        <option value="id-desc">Newest first</option>
-        <option value="priority">Priority</option>
-        <option value="retries">Most retries</option>
-    </select>
 
     <h2>Tasks</h2>
 
@@ -191,15 +184,7 @@
         <tbody id="tasks-table">
         </tbody>
     </table> -->
-    
-    <label>
-        <input
-            type="checkbox"
-            id="auto-scroll-logs"
-            checked
-        />
-        Auto-scroll logs
-    </label>
+
 
     <h2>Logs</h2>
 
@@ -237,4 +222,3 @@
     </footer>
 </body>
 </html>
-

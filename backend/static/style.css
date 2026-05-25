@@ -2,32 +2,6 @@ body {
     font-family: Arial;
 }
 
-.success {
-    background-color: #c8f7c5;
-}
-
-.failed {
-    background-color: #f7c5c5;
-}
-
-.processing {
-    background-color: #ffe9a8;
-}
-
-.queued {
-    background-color: #d6e9ff;
-}
-.row-failed {
-    background-color: #ffe0e0;
-}
-
-.row-processing {
-    background-color: #fff4cc;
-}
-
-.row-queued {
-    background-color: #e3f0ff;
-}
 #logs-panel {
     height: 250px;
     overflow-y: scroll;
@@ -51,9 +25,6 @@ body.dark-mode a {
 body.dark-mode #logs-panel {
     background-color: #000;
     color: #0f0;
-}
-.old-queued {
-    outline: 3px solid red;
 }
 section {
     margin-bottom: 24px;
@@ -131,16 +102,14 @@ body.dark-mode #top-bar {
     max-height: 300px;
 }
 .chart-container {
+    max-height: 320px;
     max-width: 700px;
-    height: 300px;
-}
-.debug-only {
-    display: none;
-}
-.chart-container {
     height: 260px;
     margin-top: 16px;
     margin-bottom: 24px;
+}
+.debug-only {
+    display: none;
 }
 #live-events {
   display: flex;
@@ -176,25 +145,6 @@ body.dark-mode #top-bar {
 .ws-error,
 .ws-disconnected {
   color: red;
-}
-.event-task_succeeded {
-  border-left: 4px solid #22c55e;
-}
-
-.event-task_failed {
-  border-left: 4px solid #ef4444;
-}
-
-.event-task_retried {
-  border-left: 4px solid #f59e0b;
-}
-
-.event-task_started {
-  border-left: 4px solid #3b82f6;
-}
-
-.event-worker_heartbeat {
-  opacity: 0.75;
 }
 #live-workers {
   display: flex;
@@ -286,10 +236,8 @@ body.dark-mode #top-bar {
 }
 
 .worker-stale {
-  border-left: 4px solid #ef4444;
-  opacity: 0.7;
+  border-left: 4px solid #ff4d4f;
 }
-
 #event-detail-drawer {
   position: fixed;
   top: 0;
@@ -324,4 +272,14 @@ body.dark-mode #top-bar {
   border-left: 4px solid #991b1b;
 
   background: rgba(153, 27, 27, 0.12);
+}
+.panel {
+  margin-bottom: 24px;
+}
+.live-event:hover {
+  transform: translateY(-1px);
+}
+#logs-container {
+  max-height: 420px;
+  overflow-y: auto;
 }
