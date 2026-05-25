@@ -18,6 +18,10 @@ let liveEventFailures = 0
 let liveEventRetries = 0
 
 let liveEventSearchQuery = ""
+const maximumLiveEvents = 100
+const maximumReceivedEventIds = 500
+const receivedEventIds = new Set()
+const receivedEventIdOrder = []
 
 const liveEventsContainer = document.getElementById("live-events")
 const wsStatus = document.getElementById("ws-status")
@@ -38,6 +42,20 @@ const incidentHistoryContainer = document.getElementById("incident-history")
 
 const throughputPoints = []
 const throughputCanvas = document.getElementById("throughput-chart")
+const failureRateCanvas = document.getElementById("failure-rate-chart")
+const failureRateWindowEl = document.getElementById("failure-rate-window")
+const failureRateEmptyEl = document.getElementById("failure-rate-empty")
+const failureRateSummaryEl = document.getElementById("failure-rate-summary")
+const failureRateChartContainer = document.getElementById("failure-rate-chart-container")
+const failureRateValueEl = document.getElementById("failure-rate-value")
+const failureRetryCountEl = document.getElementById("failure-retry-count")
+const failureTerminalCountEl = document.getElementById("failure-terminal-count")
+const failureRateEvents = []
+const workerThroughputWindowEl = document.getElementById("worker-throughput-window")
+const workerThroughputEmptyEl = document.getElementById("worker-throughput-empty")
+const workerThroughputListEl = document.getElementById("worker-throughput-list")
+const workerThroughputEvents = []
+const knownThroughputWorkers = new Set()
 const liveWorkerLastSeen = {}
 const reportedStaleWorkers = new Set()
 const recoveredWorkers = new Set()
@@ -50,6 +68,7 @@ const clearLiveEventsBtn = document.getElementById("clear-live-events-btn")
 const clearIncidentHistoryBtn = document.getElementById("clear-incident-history-btn")
 
 let throughputChart = null
+let failureRateChart = null
 
 if (throughputCanvas) {
   const throughputCtx = throughputCanvas.getContext("2d")
@@ -71,6 +90,46 @@ if (throughputCanvas) {
     options: {
       responsive: true,
       animation: false,
+    },
+  })
+}
+
+if (failureRateCanvas) {
+  const failureRateCtx = failureRateCanvas.getContext("2d")
+
+  failureRateChart = new Chart(failureRateCtx, {
+    type: "line",
+    data: {
+      labels: [],
+      datasets: [
+        {
+          label: "Failure %",
+          data: [],
+          borderColor: "#dc2626",
+          backgroundColor: "rgba(220, 38, 38, 0.12)",
+          fill: true,
+          tension: 0.25,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: {
+          display: false,
+        },
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          max: 100,
+          ticks: {
+            callback: (value) => `${value}%`,
+          },
+        },
+      },
     },
   })
 }
@@ -824,6 +883,14 @@ function initializeDashboardEventListeners() {
     refreshIntervalEl.addEventListener("change", startRefreshTimer)
   }
 
+  if (failureRateWindowEl) {
+    failureRateWindowEl.addEventListener("change", updateFailureRateChart)
+  }
+
+  if (workerThroughputWindowEl) {
+    workerThroughputWindowEl.addEventListener("change", updateWorkerThroughputPanel)
+  }
+
   startRefreshTimer()
 }
 
@@ -831,33 +898,157 @@ document.addEventListener("DOMContentLoaded", () => {
   initializeDashboardEventListeners()
 })
 
-const ws = new WebSocket(`ws://${window.location.host}/ws/operations`)
+const websocketReconnectDelays = [1000, 2000, 5000, 10000]
+const reconnectedStatusDuration = 2000
+let operationsSocket = null
+let reconnectTimer = null
+let reconnectedStatusTimer = null
+let reconnectAttempt = 0
+let hasConnected = false
+let isSocketShuttingDown = false
 
-ws.onmessage = (event) => {
-  const data = JSON.parse(event.data)
+function setWebSocketStatus(state) {
+  if (!wsStatus) return
 
-  if (data.event === "worker_heartbeat") {
-    renderLiveWorker(data)
+  const labels = {
+    connected: "Connected",
+    disconnected: "Disconnected",
+    reconnecting: "Reconnecting...",
+    reconnected: "Reconnected",
+  }
+
+  wsStatus.textContent = labels[state]
+  wsStatus.className = `ws-${state}`
+  wsStatus.dataset.state = state
+}
+
+function clearReconnectedStatusTimer() {
+  if (!reconnectedStatusTimer) return
+
+  clearTimeout(reconnectedStatusTimer)
+  reconnectedStatusTimer = null
+}
+
+function scheduleWebSocketReconnect() {
+  if (isSocketShuttingDown || reconnectTimer) return
+
+  const delay = websocketReconnectDelays[
+    Math.min(reconnectAttempt, websocketReconnectDelays.length - 1)
+  ]
+
+  reconnectAttempt += 1
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null
+
+    if (isSocketShuttingDown) return
+
+    setWebSocketStatus("reconnecting")
+    connectOperationsWebSocket()
+  }, delay)
+}
+
+function connectOperationsWebSocket() {
+  if (
+    operationsSocket &&
+    (
+      operationsSocket.readyState === WebSocket.CONNECTING ||
+      operationsSocket.readyState === WebSocket.OPEN
+    )
+  ) {
     return
   }
 
-  appendLiveEvent(data)
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
+  const socket = new WebSocket(`${protocol}//${window.location.host}/ws/operations`)
+
+  operationsSocket = socket
+
+  socket.onmessage = (event) => {
+    if (socket !== operationsSocket) return
+
+    const data = JSON.parse(event.data)
+
+    if (data.event === "worker_heartbeat") {
+      renderLiveWorker(data)
+      rememberThroughputWorker(data.worker_name)
+      updateWorkerThroughputPanel()
+      return
+    }
+
+    if (hasReceivedEvent(data)) return
+
+    recordFailureRateEvent(data)
+    recordWorkerThroughputEvent(data)
+    appendLiveEvent(data, data.replayed === true)
+  }
+
+  socket.onopen = () => {
+    if (socket !== operationsSocket) return
+
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+
+    reconnectAttempt = 0
+    clearReconnectedStatusTimer()
+
+    if (hasConnected) {
+      setWebSocketStatus("reconnected")
+      reconnectedStatusTimer = setTimeout(() => {
+        reconnectedStatusTimer = null
+
+        if (socket === operationsSocket && socket.readyState === WebSocket.OPEN) {
+          setWebSocketStatus("connected")
+        }
+      }, reconnectedStatusDuration)
+      return
+    }
+
+    hasConnected = true
+    setWebSocketStatus("connected")
+  }
+
+  socket.onclose = () => {
+    if (socket !== operationsSocket) return
+
+    operationsSocket = null
+    clearReconnectedStatusTimer()
+
+    if (isSocketShuttingDown) return
+
+    setWebSocketStatus("disconnected")
+    scheduleWebSocketReconnect()
+  }
 }
 
-ws.addEventListener("open", () => {
-  wsStatus.textContent = "connected"
-  wsStatus.className = "ws-connected"
-})
+function cleanupOperationsWebSocket() {
+  isSocketShuttingDown = true
+  clearReconnectedStatusTimer()
 
-ws.onerror = () => {
-  wsStatus.textContent = "error"
-  wsStatus.className = "ws-error"
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+
+  if (operationsSocket) {
+    const socket = operationsSocket
+    operationsSocket = null
+    socket.close()
+  }
 }
 
-ws.onclose = () => {
-  wsStatus.textContent = "disconnected"
-  wsStatus.className = "ws-disconnected"
+function restoreOperationsWebSocket() {
+  if (!isSocketShuttingDown) return
+
+  isSocketShuttingDown = false
+  setWebSocketStatus("disconnected")
+  connectOperationsWebSocket()
 }
+
+connectOperationsWebSocket()
+window.addEventListener("pagehide", cleanupOperationsWebSocket)
+window.addEventListener("pageshow", restoreOperationsWebSocket)
 
 function renderLiveWorker(data) {
   const id = `live-worker-${data.worker_name}`
@@ -877,7 +1068,235 @@ function renderLiveWorker(data) {
   `${data.worker_name} | healthy | processed=${data.processed_count}`
 }
 
-function appendLiveEvent(data) {
+function hasReceivedEvent(data) {
+  if (!data.event_id) return false
+
+  if (receivedEventIds.has(data.event_id)) {
+    return true
+  }
+
+  receivedEventIds.add(data.event_id)
+  receivedEventIdOrder.push(data.event_id)
+
+  if (receivedEventIdOrder.length > maximumReceivedEventIds) {
+    receivedEventIds.delete(receivedEventIdOrder.shift())
+  }
+
+  return false
+}
+
+function recordFailureRateEvent(data) {
+  if (
+    data.event !== "task_succeeded" &&
+    data.event !== "task_failed" &&
+    data.event !== "task_poisoned" &&
+    data.event !== "task_retried"
+  ) {
+    return
+  }
+
+  const timestamp = Date.parse(data.timestamp)
+
+  if (Number.isNaN(timestamp)) return
+
+  failureRateEvents.push({
+    event: data.event,
+    timestamp,
+  })
+
+  trimFailureRateEvents()
+  updateFailureRateChart()
+}
+
+function trimFailureRateEvents() {
+  const cutoff = Date.now() - 300_000
+
+  for (let index = failureRateEvents.length - 1; index >= 0; index -= 1) {
+    if (failureRateEvents[index].timestamp < cutoff) {
+      failureRateEvents.splice(index, 1)
+    }
+  }
+}
+
+function updateFailureRateChart() {
+  if (
+    !failureRateChart ||
+    !failureRateEmptyEl ||
+    !failureRateSummaryEl ||
+    !failureRateChartContainer
+  ) {
+    return
+  }
+
+  trimFailureRateEvents()
+
+  const windowMs = Number(failureRateWindowEl ? failureRateWindowEl.value : 60_000)
+  const now = Date.now()
+  const cutoff = now - windowMs
+  const windowEvents = failureRateEvents.filter((event) => event.timestamp >= cutoff)
+  const terminalEvents = windowEvents.filter(
+    (event) => (
+      event.event === "task_succeeded" ||
+      event.event === "task_failed" ||
+      event.event === "task_poisoned"
+    )
+  )
+  const failedEvents = terminalEvents.filter(
+    (event) => event.event === "task_failed" || event.event === "task_poisoned"
+  )
+  const retryCount = windowEvents.filter((event) => event.event === "task_retried").length
+  const failureRate = terminalEvents.length
+    ? Math.round((failedEvents.length / terminalEvents.length) * 100)
+    : 0
+
+  if (failureRateValueEl) failureRateValueEl.textContent = `${failureRate}%`
+  if (failureRetryCountEl) failureRetryCountEl.textContent = retryCount
+  if (failureTerminalCountEl) failureTerminalCountEl.textContent = terminalEvents.length
+
+  const hasTerminalEvents = terminalEvents.length > 0
+
+  failureRateEmptyEl.classList.toggle("hidden", hasTerminalEvents)
+  failureRateSummaryEl.classList.toggle("hidden", !hasTerminalEvents)
+  failureRateChartContainer.classList.toggle("hidden", !hasTerminalEvents)
+
+  if (!hasTerminalEvents) {
+    failureRateChart.data.labels = []
+    failureRateChart.data.datasets[0].data = []
+    failureRateChart.update()
+    return
+  }
+
+  failureRateChart.resize()
+
+  const bucketCount = windowMs === 60_000 ? 12 : 10
+  const bucketSize = windowMs / bucketCount
+  const labels = []
+  const points = []
+
+  for (let index = 0; index < bucketCount; index += 1) {
+    const bucketEnd = cutoff + ((index + 1) * bucketSize)
+    const outcomesToPoint = terminalEvents.filter((event) => event.timestamp <= bucketEnd)
+    const failuresToPoint = outcomesToPoint.filter(
+      (event) => event.event === "task_failed" || event.event === "task_poisoned"
+    )
+
+    labels.push(new Date(bucketEnd).toLocaleTimeString())
+    points.push(
+      outcomesToPoint.length
+        ? Math.round((failuresToPoint.length / outcomesToPoint.length) * 100)
+        : null
+    )
+  }
+
+  failureRateChart.data.labels = labels
+  failureRateChart.data.datasets[0].data = points
+  failureRateChart.update()
+}
+
+function rememberThroughputWorker(workerName) {
+  if (workerName) {
+    knownThroughputWorkers.add(workerName)
+  }
+}
+
+function recordWorkerThroughputEvent(data) {
+  if (data.event !== "worker_processed_count_updated" || !data.worker_name) {
+    return
+  }
+
+  const timestamp = Date.parse(data.timestamp)
+
+  if (Number.isNaN(timestamp)) return
+
+  rememberThroughputWorker(data.worker_name)
+  workerThroughputEvents.push({
+    timestamp,
+    workerName: data.worker_name,
+  })
+
+  trimWorkerThroughputEvents()
+  updateWorkerThroughputPanel()
+}
+
+function trimWorkerThroughputEvents() {
+  const cutoff = Date.now() - 60_000
+
+  for (let index = workerThroughputEvents.length - 1; index >= 0; index -= 1) {
+    if (workerThroughputEvents[index].timestamp < cutoff) {
+      workerThroughputEvents.splice(index, 1)
+    }
+  }
+}
+
+function updateWorkerThroughputPanel() {
+  if (!workerThroughputEmptyEl || !workerThroughputListEl) return
+
+  trimWorkerThroughputEvents()
+
+  if (!knownThroughputWorkers.size) {
+    workerThroughputEmptyEl.classList.remove("hidden")
+    workerThroughputListEl.classList.add("hidden")
+    return
+  }
+
+  const windowMs = Number(workerThroughputWindowEl ? workerThroughputWindowEl.value : 10_000)
+  const windowSeconds = windowMs / 1000
+  const cutoff = Date.now() - windowMs
+  const counts = new Map()
+
+  workerThroughputEvents.forEach((event) => {
+    if (event.timestamp >= cutoff) {
+      counts.set(event.workerName, (counts.get(event.workerName) || 0) + 1)
+    }
+  })
+
+  const rows = Array.from(knownThroughputWorkers)
+    .sort()
+    .map((workerName) => {
+      const count = counts.get(workerName) || 0
+
+      return {
+        count,
+        rate: count / windowSeconds,
+        workerName,
+      }
+    })
+  const maximumRate = Math.max(...rows.map((row) => row.rate), 0.01)
+
+  workerThroughputEmptyEl.classList.add("hidden")
+  workerThroughputListEl.classList.remove("hidden")
+  workerThroughputListEl.innerHTML = ""
+
+  rows.forEach((row) => {
+    const item = document.createElement("div")
+    const name = document.createElement("span")
+    const bar = document.createElement("div")
+    const fill = document.createElement("div")
+    const rate = document.createElement("span")
+
+    item.className = "worker-throughput-row"
+
+    if (row.rate === 0) {
+      item.classList.add("worker-throughput-idle")
+    }
+
+    name.className = "worker-throughput-name"
+    name.textContent = row.workerName
+    bar.className = "worker-throughput-bar"
+    fill.className = "worker-throughput-bar-fill"
+    fill.style.width = `${Math.round((row.rate / maximumRate) * 100)}%`
+    rate.className = "worker-throughput-rate"
+    rate.textContent = `${row.rate.toFixed(2)}/sec`
+
+    bar.appendChild(fill)
+    item.appendChild(name)
+    item.appendChild(bar)
+    item.appendChild(rate)
+    workerThroughputListEl.appendChild(item)
+  })
+}
+
+function appendLiveEvent(data, isReplayed = false) {
   if (isLiveStreamPaused) {
     return
   }
@@ -893,8 +1312,26 @@ function appendLiveEvent(data) {
   const eventCard = document.createElement("div")
   const severity = getEventSeverity(data)
   eventCard.dataset.searchText = JSON.stringify(data).toLowerCase()
-  eventCard.className =`live-event severity-${severity}`
+
+  if (data.event_id) {
+    eventCard.dataset.eventId = data.event_id
+  }
+
+  eventCard.className = `live-event severity-${severity}`
+
+  if (isReplayed) {
+    eventCard.classList.add("live-event-replayed")
+  }
+
   eventCard.textContent = formatEvent(data)
+
+  if (isReplayed) {
+    const replayBadge = document.createElement("span")
+    replayBadge.className = "live-event-origin"
+    replayBadge.textContent = "History"
+    eventCard.appendChild(replayBadge)
+  }
+
   eventCard.addEventListener("click", () => {
     if (!eventDetailDrawer || !eventDetailContent) return
 
@@ -903,22 +1340,25 @@ function appendLiveEvent(data) {
     })
   liveEventsContainer.prepend(eventCard)
 
-  if (liveEventsContainer.children.length > 50) {
+  if (liveEventsContainer.children.length > maximumLiveEvents) {
     liveEventsContainer.removeChild(liveEventsContainer.lastChild)
   }
 
-  if (data.event.includes("failed") || data.event.includes("poison")) {
+  if (!isReplayed && (data.event.includes("failed") || data.event.includes("poison"))) {
     const message = formatEvent(data)
     showToast(message)
     addIncident(message)
   }
 
-    if (data.event === "task_succeeded") {
+    if (!isReplayed && data.event === "task_succeeded") {
     recordThroughputSuccess()
     }
 
   updateLiveEventStats(data)
-  detectFailureSpike(data)
+
+  if (!isReplayed) {
+    detectFailureSpike(data)
+  }
 }
 function formatEvent(data) {
   switch (data.event) {
@@ -1181,3 +1621,5 @@ function applyLiveEventSearchFilter() {
 
 setInterval(updateWorkerHealth, 1000)
 setInterval(updateThroughputChart, 1000)
+setInterval(updateFailureRateChart, 1000)
+setInterval(updateWorkerThroughputPanel, 1000)

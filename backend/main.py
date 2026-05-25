@@ -19,6 +19,11 @@ from db import Base, SessionLocal, engine
 from dependencies import get_db
 from models import Alert, Task, TaskLog, WorkerHeartbeat
 from redis_client import redis_client
+from logger import (
+    OPERATIONS_CHANNEL,
+    OPERATIONS_HISTORY_KEY,
+    OPERATIONS_HISTORY_LIMIT,
+)
 from schemas import alert_to_dict, task_to_dict, worker_to_dict
 from services.task_service import create_task
 
@@ -801,9 +806,20 @@ async def operations_websocket(websocket: WebSocket):
     await websocket.accept()
 
     pubsub = redis_client.pubsub()
-    pubsub.subscribe("operations")
+    pubsub.subscribe(OPERATIONS_CHANNEL)
 
     try:
+        stored_events = redis_client.lrange(
+            OPERATIONS_HISTORY_KEY,
+            0,
+            OPERATIONS_HISTORY_LIMIT - 1,
+        )
+
+        for stored_event in reversed(stored_events):
+            data = json.loads(stored_event)
+            data["replayed"] = True
+            await websocket.send_text(json.dumps(data, default=str))
+
         while True:
             message = pubsub.get_message(ignore_subscribe_messages=True)
 

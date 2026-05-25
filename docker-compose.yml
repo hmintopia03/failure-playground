@@ -10,6 +10,8 @@ services:
       - ./backend:/app
     environment:
       DATABASE_URL: postgresql+psycopg2://app:app@postgres:5432/failure_playground
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       ENVIRONMENT: docker-local
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
       OTEL_SERVICE_NAME: failure-playground-api
@@ -38,6 +40,8 @@ services:
     environment:
       WORKER_NAME: worker-a
       DATABASE_URL: postgresql+psycopg2://app:app@postgres:5432/failure_playground
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
       OTEL_SERVICE_NAME: failure-playground-worker
     volumes:
@@ -59,6 +63,8 @@ services:
     environment:
       WORKER_NAME: worker-b
       DATABASE_URL: postgresql+psycopg2://app:app@postgres:5432/failure_playground
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
       OTEL_SERVICE_NAME: failure-playground-worker
     volumes:

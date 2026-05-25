@@ -10,9 +10,17 @@ It simulates a production-style asynchronous task-processing system using FastAP
 
 ## Current Status
 
-**Current version:** `v2` — Realtime Operations Playground
+**Current version:** `v2.4` — Realtime Operations & Resilience Playground
 
-v2 is the focus of this project today. It builds on the v1.5 backend/observability foundation and adds a live operational dashboard driven by Redis pub/sub and FastAPI WebSockets.
+v2.4 extends the original realtime operations dashboard into a more resilient operational console with:
+
+- automatic WebSocket recovery with reconnect backoff
+- Redis-backed event persistence and replay
+- event replay deduplication via `event_id`
+- rolling failure-rate visualization
+- per-worker realtime throughput monitoring
+
+The dashboard now behaves more like a lightweight live operations surface than a simple status viewer.
 
 ---
 
@@ -34,20 +42,30 @@ Operators see events as they happen, get alerted on failure spikes, watch worker
 - **Event filtering + search** — filter live events by type (tasks/failures/retries/workers) and search across event payloads
 - **Realtime throughput chart** — tasks-per-second over a rolling window, updated live
 - **Poison task visualization** — poison events are flagged with a distinct severity level
+- **Automatic WebSocket reconnect handling** — dashboard reconnects after API/WebSocket interruption with exponential backoff
+- **Redis-backed event replay** — recent operational events survive refreshes and reconnects
+- **Replay-safe event deduplication** — `event_id` prevents reconnect/replay double-counting
+- **Rolling failure-rate visualization** — live 1-minute and 5-minute operational failure percentages
+- **Per-worker throughput panel** — rolling per-worker processing rates over 10s/60s windows
+- **Historical replay tagging** — replayed events are visually marked as history
 
 ### v2 Realtime Data Flow
 
 ```
-Workers
-   ↓
-Redis Pub/Sub
-   ↓
-FastAPI WebSocket  (/ws/operations)
-   ↓
-Dashboard Live Events
+Workers / API
+      ↓
+Redis Pub/Sub + Replay History
+      ↓
+FastAPI WebSocket (/ws/operations)
+      ↓
+Dashboard
+   ├─ live events
+   ├─ replayed history
+   ├─ failure-rate metrics
+   └─ per-worker throughput
 ```
 
-The dashboard subscribes once via WebSocket and reacts to events as they arrive. No polling for the live panels.
+The dashboard subscribes once via WebSocket and reacts to events as they arrive. On reconnect, recent events are replayed from Redis so operators recover incident context automatically. No polling for the live panels.
 
 ### Dashboard Robustness
 
@@ -59,11 +77,17 @@ The v2 dashboard JS was hardened so missing UI elements degrade gracefully rathe
 
 This makes the dashboard tolerant to partial HTML edits during development and tweakable for screenshots/demos.
 
+Additional resilience improvements added in v2.1–v2.4:
+
+- Automatic reconnect with exponential backoff after WebSocket interruption
+- Replay-safe reconnect recovery using Redis-backed event history
+- Event deduplication via `event_id`
+- Rebuild of rolling charts and throughput metrics after reconnect/replay
+- Historical replay rows visually separated from live events
+
 ---
 
 ## Dashboard Screenshots
-
-
 
 ![Realtime operations dashboard — full view](backend/dashboard-v2.png)
 
@@ -340,6 +364,15 @@ The dashboard surfaces:
 - An incident history panel that accumulates significant events for the session
 - A drawer for inspecting any event's full payload
 
+The dashboard also derives rolling operational metrics directly from the live event stream:
+
+- failure percentage over rolling time windows
+- retry spikes
+- per-worker processing throughput
+- replay-safe reconstruction after reconnects and refreshes
+
+This allows the dashboard to function as a lightweight realtime operational surface instead of only a live event viewer.
+
 This is the layer that closes the loop between the system misbehaving and the operator noticing.
 
 ---
@@ -360,6 +393,11 @@ The browser dashboard is the **v2 operations console**. It is intentionally smal
 - Task list with filters and pagination
 - Log list with task ID filter and pagination
 - System pause/resume + queue/reset controls
+- WebSocket connection/reconnect status
+- Replay-backed live event history
+- Rolling failure-rate visualization
+- Per-worker throughput monitoring
+- Historical replay markers
 
 ### What it is not
 
@@ -485,7 +523,16 @@ The project evolved from a simple task queue into a broader platform engineering
 
 ## Version History
 
-### v2 — Realtime Operations Playground (current)
+### v2.4 — Operational Resilience & Derived Metrics (current)
+
+- Automatic WebSocket reconnect with exponential backoff
+- Redis-backed event persistence and replay
+- Replay-safe event deduplication via `event_id`
+- Historical replay tagging
+- Rolling failure-rate visualization
+- Per-worker realtime throughput monitoring
+
+### v2 — Realtime Operations Playground
 
 - Redis pub/sub event bus
 - FastAPI `/ws/operations` WebSocket
@@ -529,7 +576,9 @@ This project is designed for local platform engineering learning, not production
 
 - No authentication or authorization (dashboard is open to anyone who can reach the port)
 - Alembic migration history is minimal (project started with an existing schema)
-- WebSocket reconnect on the dashboard is basic (status indicator only, no automatic backoff/retry yet)
+- Event replay history is intentionally bounded (latest 100 events only)
+- Rolling operational metrics are dashboard-derived rather than computed from a dedicated metrics backend
+- Realtime operational history is optimized for short-term visibility, not long-term analytics
 - No Kubernetes deployment
 - No external deployment target
 - Long-term analytics rely on Prometheus/Grafana retention, not a custom system
@@ -540,23 +589,18 @@ This project is designed for local platform engineering learning, not production
 
 Items are grouped by theme. Each one is a real engineering problem, not a checklist item.
 
-### v2.1 — Observability Depth
+### v3 — Operational Correlation & Metrics Depth
 
-- **OpenTelemetry tracing on WebSocket events** — right now the realtime event stream has no trace context. Correlating a live `task_failed` event back to its Jaeger span requires manual lookup. Propagating trace IDs through pub/sub events would close this gap.
+- **Trace ID propagation into realtime events** — right now the realtime event stream has no trace context. Propagating OpenTelemetry trace IDs through pub/sub events would allow direct dashboard-to-Jaeger linking: click a live `task_failed` event and jump straight to its trace.
 - **Prometheus metrics for the dashboard itself** — track how many clients are connected, WebSocket message throughput, and event delivery lag. Currently the dashboard is invisible to Prometheus.
-- **Grafana panel for failure rate over time** — Grafana already has task counts but no derived failure rate (failures / total). A dedicated panel would make failure spikes visible in the long-term view, not just the 10-second dashboard alert.
-- **Per-worker throughput chart** — the current dashboard shows aggregate throughput. A per-worker breakdown would reveal stragglers: workers processing far fewer tasks than peers, which is an early signal of a stuck or degraded worker before it goes fully stale.
+- **Long-term operational event retention** — current event history is bounded to the latest 100 events in Redis. A durable store (PostgreSQL or a time-series DB) would enable post-incident review and trend analysis beyond the current session.
+- **Cross-worker latency heatmaps** — visualize processing time distribution across workers to surface uneven load, slow workers, and latency outliers.
+- **Queue latency visualization** — time between task enqueue and first claim, tracked per priority level.
 
-### v2.1 — Dashboard Reliability
+### v3 — Infrastructure Scale
 
-- **WebSocket reconnect with exponential backoff** — the dashboard currently shows a disconnected status but does not attempt to reconnect. An automatic reconnect loop with backoff would make the dashboard self-healing after server restarts or network blips.
-- **Event persistence across page reload** — all live events are in-memory and lost on refresh. Persisting recent events to `sessionStorage` (or fetching the last N events from an API endpoint on reconnect) would let operators reload without losing incident context.
-- **Timeline replay** — ability to replay the last N events in order, useful after reconnecting mid-incident. Requires either server-side event buffering or a short Redis stream.
-
-### v2.2 — Infrastructure Scale
-
-- **Kafka event streaming** — replacing Redis pub/sub with Kafka would make the event bus durable, replayable, and inspectable independently of the API. Also adds a realistic Kafka operational concern to the playground: consumer lag, partition assignment, and broker health.
-- **Kubernetes worker scaling** — running workers as a Kubernetes Deployment would let the playground explore horizontal scaling, pod disruption, and liveness/readiness probe behavior under queue pressure. Workers are already stateless and naturally suited for this.
+- **Kafka event streaming** — replacing Redis pub/sub with Kafka would make the event bus durable, replayable, and inspectable independently of the API. Adds realistic Kafka operational concerns: consumer lag, partition assignment, and broker health.
+- **Kubernetes worker scaling** — running workers as a Kubernetes Deployment to explore horizontal scaling, pod disruption, and liveness/readiness probe behavior under queue pressure. Workers are stateless and naturally suited for this.
 
 ### Longer Term
 

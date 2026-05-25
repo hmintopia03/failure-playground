@@ -52,6 +52,45 @@
 
         <canvas id="throughput-chart"></canvas>
     </section>
+    <section class="panel failure-rate-panel">
+        <div class="panel-heading">
+            <h2>Failure Rate</h2>
+            <label>
+                Window:
+                <select id="failure-rate-window">
+                    <option value="60000" selected>Last 1 minute</option>
+                    <option value="300000">Last 5 minutes</option>
+                </select>
+            </label>
+        </div>
+
+        <div id="failure-rate-empty">Not enough recent events yet</div>
+
+        <div id="failure-rate-summary" class="outcome-summary hidden">
+            <div><span>Failure</span><strong id="failure-rate-value">0%</strong></div>
+            <div><span>Retries</span><strong id="failure-retry-count">0</strong></div>
+            <div><span>Terminal events</span><strong id="failure-terminal-count">0</strong></div>
+        </div>
+
+        <div id="failure-rate-chart-container" class="failure-rate-chart hidden">
+            <canvas id="failure-rate-chart"></canvas>
+        </div>
+    </section>
+    <section class="panel worker-throughput-panel">
+        <div class="panel-heading">
+            <h2>Worker Throughput</h2>
+            <label>
+                Window:
+                <select id="worker-throughput-window">
+                    <option value="10000" selected>Last 10 seconds</option>
+                    <option value="60000">Last 60 seconds</option>
+                </select>
+            </label>
+        </div>
+
+        <div id="worker-throughput-empty">Not enough worker data yet</div>
+        <div id="worker-throughput-list" class="worker-throughput-list hidden"></div>
+    </section>
     <section class="panel">
         <h2>Live Workers</h2>
         <div id="live-workers"></div>
@@ -61,7 +100,7 @@
 
         <h2>
             Live Events
-            <span id="ws-status">connecting...</span>
+            <span id="ws-status" class="ws-disconnected" data-state="disconnected" role="status" aria-live="polite">Disconnected</span>
         </h2>
 
         <div id="live-event-filters">
