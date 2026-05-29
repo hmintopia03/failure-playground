@@ -56,12 +56,43 @@ const workerThroughputEmptyEl = document.getElementById("worker-throughput-empty
 const workerThroughputListEl = document.getElementById("worker-throughput-list")
 const workerThroughputEvents = []
 const knownThroughputWorkers = new Set()
+const queueLatencyEmptyEl = document.getElementById("queue-latency-empty")
+const queueLatencySummaryEl = document.getElementById("queue-latency-summary")
+const queueLatencyLatestEl = document.getElementById("queue-latency-latest")
+const queueLatencyAverageEl = document.getElementById("queue-latency-average")
+const queueLatencyMaxEl = document.getElementById("queue-latency-max")
+const queueLatencyCountEl = document.getElementById("queue-latency-count")
+const maximumQueueLatencySamples = 100
+const maximumQueueLatencyTrackedTasks = 300
+const queueCreatedTimestamps = new Map()
+const queueCreatedTaskIds = []
+const queueStartedTaskIds = new Set()
+const queueLatencySamples = []
+const processingLatencyEmptyEl = document.getElementById("processing-latency-empty")
+const processingLatencySummaryEl = document.getElementById("processing-latency-summary")
+const processingLatencyLatestEl = document.getElementById("processing-latency-latest")
+const processingLatencyAverageEl = document.getElementById("processing-latency-average")
+const processingLatencyMaxEl = document.getElementById("processing-latency-max")
+const processingLatencyCountEl = document.getElementById("processing-latency-count")
+const maximumProcessingLatencySamples = 100
+const maximumProcessingLatencyTrackedTasks = 300
+const processingStartedTimestamps = new Map()
+const processingStartedTaskIds = []
+const processingLatencySamples = []
+const systemHealthCardEl = document.getElementById("system-health-card")
+const systemHealthStateEl = document.getElementById("system-health-state")
+const systemHealthReasonEl = document.getElementById("system-health-reason")
+let latestMetricsSnapshot = null
 const liveWorkerLastSeen = {}
 const reportedStaleWorkers = new Set()
 const recoveredWorkers = new Set()
 
 const eventDetailDrawer = document.getElementById("event-detail-drawer")
 const eventDetailContent = document.getElementById("event-detail-content")
+const eventTraceFields = document.getElementById("event-trace-fields")
+const eventTraceId = document.getElementById("event-trace-id")
+const eventSpanId = document.getElementById("event-span-id")
+const eventTraceLink = document.getElementById("event-trace-link")
 const closeEventDetailBtn = document.getElementById("close-event-detail-btn")
 const liveEventSearchInput = document.getElementById("live-event-search")
 const clearLiveEventsBtn = document.getElementById("clear-live-events-btn")
@@ -213,6 +244,7 @@ function applyLogFilter() {
 
 async function loadMetrics() {
     const data = await fetchJson("/metrics");
+    latestMetricsSnapshot = data
 
     const queueClass =
         data.queued > 20 ? "card-danger" :
@@ -243,6 +275,8 @@ async function loadMetrics() {
 
     document.getElementById("metrics").textContent =
         JSON.stringify(data, null, 2);
+
+    updateSystemHealthPanel()
 
     if (typeof Chart === "undefined") {
         console.warn("Chart.js is not loaded");
@@ -979,6 +1013,8 @@ function connectOperationsWebSocket() {
 
     recordFailureRateEvent(data)
     recordWorkerThroughputEvent(data)
+    recordQueueLatencyEvent(data)
+    recordProcessingLatencyEvent(data)
     appendLiveEvent(data, data.replayed === true)
   }
 
@@ -1066,6 +1102,7 @@ function renderLiveWorker(data) {
 
   item.textContent =
   `${data.worker_name} | healthy | processed=${data.processed_count}`
+  updateSystemHealthPanel()
 }
 
 function hasReceivedEvent(data) {
@@ -1163,6 +1200,7 @@ function updateFailureRateChart() {
     failureRateChart.data.labels = []
     failureRateChart.data.datasets[0].data = []
     failureRateChart.update()
+    updateSystemHealthPanel()
     return
   }
 
@@ -1191,6 +1229,7 @@ function updateFailureRateChart() {
   failureRateChart.data.labels = labels
   failureRateChart.data.datasets[0].data = points
   failureRateChart.update()
+  updateSystemHealthPanel()
 }
 
 function rememberThroughputWorker(workerName) {
@@ -1236,6 +1275,7 @@ function updateWorkerThroughputPanel() {
   if (!knownThroughputWorkers.size) {
     workerThroughputEmptyEl.classList.remove("hidden")
     workerThroughputListEl.classList.add("hidden")
+    updateSystemHealthPanel()
     return
   }
 
@@ -1294,6 +1334,329 @@ function updateWorkerThroughputPanel() {
     item.appendChild(rate)
     workerThroughputListEl.appendChild(item)
   })
+
+  updateSystemHealthPanel()
+}
+
+function recordQueueLatencyEvent(data) {
+  if (!data.task_id) return
+
+  const taskId = String(data.task_id)
+  const timestamp = Date.parse(data.timestamp)
+
+  if (Number.isNaN(timestamp)) return
+
+  if (data.event === "task_created") {
+    if (!queueCreatedTimestamps.has(taskId)) {
+      queueCreatedTaskIds.push(taskId)
+    }
+
+    queueCreatedTimestamps.set(taskId, timestamp)
+
+    while (queueCreatedTaskIds.length > maximumQueueLatencyTrackedTasks) {
+      queueCreatedTimestamps.delete(queueCreatedTaskIds.shift())
+    }
+
+    return
+  }
+
+  if (data.event !== "task_started" || queueStartedTaskIds.has(taskId)) {
+    return
+  }
+
+  const createdTimestamp = parseQueueReferenceTimestamp(data) ?? queueCreatedTimestamps.get(taskId)
+
+  if (createdTimestamp === undefined) return
+
+  const waitMs = Math.max(timestamp - createdTimestamp, 0)
+
+  queueStartedTaskIds.add(taskId)
+  queueLatencySamples.push({
+    taskId,
+    timestamp,
+    waitMs,
+  })
+
+  while (queueLatencySamples.length > maximumQueueLatencySamples) {
+    queueLatencySamples.shift()
+  }
+
+  updateQueueLatencyPanel()
+}
+
+function parseQueueReferenceTimestamp(data) {
+  const reference = data.queued_at || data.created_at
+
+  if (!reference) return undefined
+
+  const timestamp = Date.parse(reference)
+
+  if (Number.isNaN(timestamp)) return undefined
+
+  return timestamp
+}
+
+function formatQueueLatency(waitMs) {
+  if (waitMs < 1000) {
+    return `${Math.round(waitMs)} ms`
+  }
+
+  if (waitMs < 60_000) {
+    return `${(waitMs / 1000).toFixed(1)} sec`
+  }
+
+  return `${(waitMs / 60_000).toFixed(1)} min`
+}
+
+function updateQueueLatencyPanel() {
+  if (
+    !queueLatencyEmptyEl ||
+    !queueLatencySummaryEl ||
+    !queueLatencyLatestEl ||
+    !queueLatencyAverageEl ||
+    !queueLatencyMaxEl ||
+    !queueLatencyCountEl
+  ) {
+    return
+  }
+
+  if (!queueLatencySamples.length) {
+    queueLatencyEmptyEl.classList.remove("hidden")
+    queueLatencySummaryEl.classList.add("hidden")
+    return
+  }
+
+  const latest = queueLatencySamples[queueLatencySamples.length - 1]
+  const totalWait = queueLatencySamples.reduce((sum, sample) => sum + sample.waitMs, 0)
+  const averageWait = totalWait / queueLatencySamples.length
+  const maxWait = Math.max(...queueLatencySamples.map((sample) => sample.waitMs))
+
+  queueLatencyLatestEl.textContent = formatQueueLatency(latest.waitMs)
+  queueLatencyAverageEl.textContent = formatQueueLatency(averageWait)
+  queueLatencyMaxEl.textContent = formatQueueLatency(maxWait)
+  queueLatencyCountEl.textContent = queueLatencySamples.length
+
+  queueLatencyEmptyEl.classList.add("hidden")
+  queueLatencySummaryEl.classList.remove("hidden")
+  updateSystemHealthPanel()
+}
+
+function recordProcessingLatencyEvent(data) {
+  if (!data.task_id) return
+
+  const taskId = String(data.task_id)
+  const timestamp = Date.parse(data.timestamp)
+
+  if (Number.isNaN(timestamp)) return
+
+  if (data.event === "task_started") {
+    if (!processingStartedTimestamps.has(taskId)) {
+      processingStartedTaskIds.push(taskId)
+    }
+
+    processingStartedTimestamps.set(taskId, timestamp)
+
+    while (processingStartedTaskIds.length > maximumProcessingLatencyTrackedTasks) {
+      processingStartedTimestamps.delete(processingStartedTaskIds.shift())
+    }
+
+    return
+  }
+
+  if (!isTerminalTaskEvent(data.event)) {
+    return
+  }
+
+  const startedTimestamp =
+    parseProcessingReferenceTimestamp(data) ?? processingStartedTimestamps.get(taskId)
+
+  if (startedTimestamp === undefined) return
+
+  const durationMs = Math.max(timestamp - startedTimestamp, 0)
+
+  processingLatencySamples.push({
+    taskId,
+    timestamp,
+    durationMs,
+  })
+
+  while (processingLatencySamples.length > maximumProcessingLatencySamples) {
+    processingLatencySamples.shift()
+  }
+
+  updateProcessingLatencyPanel()
+}
+
+function isTerminalTaskEvent(event) {
+  return (
+    event === "task_succeeded" ||
+    event === "task_failed" ||
+    event === "task_poisoned"
+  )
+}
+
+function parseProcessingReferenceTimestamp(data) {
+  const reference = data.started_at || data.processing_started_at
+
+  if (!reference) return undefined
+
+  const timestamp = Date.parse(reference)
+
+  if (Number.isNaN(timestamp)) return undefined
+
+  return timestamp
+}
+
+function updateProcessingLatencyPanel() {
+  if (
+    !processingLatencyEmptyEl ||
+    !processingLatencySummaryEl ||
+    !processingLatencyLatestEl ||
+    !processingLatencyAverageEl ||
+    !processingLatencyMaxEl ||
+    !processingLatencyCountEl
+  ) {
+    return
+  }
+
+  if (!processingLatencySamples.length) {
+    processingLatencyEmptyEl.classList.remove("hidden")
+    processingLatencySummaryEl.classList.add("hidden")
+    return
+  }
+
+  const latest = processingLatencySamples[processingLatencySamples.length - 1]
+  const totalDuration = processingLatencySamples.reduce(
+    (sum, sample) => sum + sample.durationMs,
+    0
+  )
+  const averageDuration = totalDuration / processingLatencySamples.length
+  const maxDuration = Math.max(...processingLatencySamples.map((sample) => sample.durationMs))
+
+  processingLatencyLatestEl.textContent = formatQueueLatency(latest.durationMs)
+  processingLatencyAverageEl.textContent = formatQueueLatency(averageDuration)
+  processingLatencyMaxEl.textContent = formatQueueLatency(maxDuration)
+  processingLatencyCountEl.textContent = processingLatencySamples.length
+
+  processingLatencyEmptyEl.classList.add("hidden")
+  processingLatencySummaryEl.classList.remove("hidden")
+  updateSystemHealthPanel()
+}
+
+function getFailureHealthStats() {
+  trimFailureRateEvents()
+
+  const now = Date.now()
+  const cutoff = now - 60_000
+  const recentEvents = failureRateEvents.filter((event) => event.timestamp >= cutoff)
+  const terminalEvents = recentEvents.filter((event) => isTerminalTaskEvent(event.event))
+  const failedEvents = terminalEvents.filter(
+    (event) => event.event === "task_failed" || event.event === "task_poisoned"
+  )
+  const failureRate = terminalEvents.length
+    ? Math.round((failedEvents.length / terminalEvents.length) * 100)
+    : 0
+
+  return {
+    failedCount: failedEvents.length,
+    failureRate,
+    terminalCount: terminalEvents.length,
+  }
+}
+
+function averageSampleValue(samples, key) {
+  if (!samples.length) return 0
+
+  return samples.reduce((sum, sample) => sum + sample[key], 0) / samples.length
+}
+
+function maxSampleValue(samples, key) {
+  if (!samples.length) return 0
+
+  return Math.max(...samples.map((sample) => sample[key]))
+}
+
+function getWorkerHealthCounts() {
+  const now = Date.now()
+  const workers = Object.values(liveWorkerLastSeen)
+
+  return {
+    healthy: workers.filter((lastSeen) => now - lastSeen <= 5000).length,
+    total: workers.length,
+  }
+}
+
+function setSystemHealth(state, label, reason) {
+  if (!systemHealthCardEl || !systemHealthStateEl || !systemHealthReasonEl) return
+
+  systemHealthCardEl.className = `system-health-card health-${state}`
+  systemHealthStateEl.textContent = label
+  systemHealthReasonEl.textContent = reason
+}
+
+function updateSystemHealthPanel() {
+  if (!systemHealthCardEl || !systemHealthStateEl || !systemHealthReasonEl) return
+
+  if (!latestMetricsSnapshot) {
+    setSystemHealth(
+      "unknown",
+      "Unknown",
+      "Waiting for metrics and live events..."
+    )
+    return
+  }
+
+  const queueDepth = Number(
+    latestMetricsSnapshot.redis_queue_length ?? latestMetricsSnapshot.queued ?? 0
+  )
+  const queuedTasks = Number(latestMetricsSnapshot.queued ?? 0)
+  const processingTasks = Number(latestMetricsSnapshot.processing ?? 0)
+  const failureStats = getFailureHealthStats()
+  const averageQueueWaitMs = averageSampleValue(queueLatencySamples, "waitMs")
+  const maxQueueWaitMs = maxSampleValue(queueLatencySamples, "waitMs")
+  const averageProcessingMs = averageSampleValue(processingLatencySamples, "durationMs")
+  const maxProcessingMs = maxSampleValue(processingLatencySamples, "durationMs")
+  const workerCounts = getWorkerHealthCounts()
+
+  if (failureStats.terminalCount >= 3 && failureStats.failureRate >= 50) {
+    setSystemHealth(
+      "failure-spike",
+      "Failure Spike",
+      `${failureStats.failedCount} of ${failureStats.terminalCount} recent terminal events failed (${failureStats.failureRate}% over the last minute).`
+    )
+    return
+  }
+
+  if (queueDepth > 20 || queuedTasks > 20 || (queueDepth > 5 && averageQueueWaitMs > 5_000)) {
+    setSystemHealth(
+      "queue-pressure",
+      "Queue Pressure",
+      `Queue depth is ${queueDepth} with ${queuedTasks} queued tasks; average queue wait is ${formatQueueLatency(averageQueueWaitMs)} and max wait is ${formatQueueLatency(maxQueueWaitMs)}.`
+    )
+    return
+  }
+
+  if (
+    processingLatencySamples.length >= 3 &&
+    (averageProcessingMs > 4_000 || maxProcessingMs > 10_000)
+  ) {
+    setSystemHealth(
+      "processing-bottleneck",
+      "Processing Bottleneck",
+      `Workers are spending ${formatQueueLatency(averageProcessingMs)} on average per task, with a max of ${formatQueueLatency(maxProcessingMs)} across ${processingLatencySamples.length} recent terminal events.`
+    )
+    return
+  }
+
+  const workerText = workerCounts.total
+    ? `${workerCounts.healthy}/${workerCounts.total} workers healthy`
+    : "worker health not observed yet"
+
+  setSystemHealth(
+    "healthy",
+    "Healthy",
+    `No active pressure detected: queue depth ${queueDepth}, ${processingTasks} processing, failure rate ${failureStats.failureRate}%, ${workerText}.`
+  )
 }
 
 function appendLiveEvent(data, isReplayed = false) {
@@ -1335,6 +1698,7 @@ function appendLiveEvent(data, isReplayed = false) {
   eventCard.addEventListener("click", () => {
     if (!eventDetailDrawer || !eventDetailContent) return
 
+    renderEventTraceFields(data)
     eventDetailContent.textContent = JSON.stringify(data, null, 2)
     eventDetailDrawer.classList.remove("hidden")
     })
@@ -1359,6 +1723,31 @@ function appendLiveEvent(data, isReplayed = false) {
   if (!isReplayed) {
     detectFailureSpike(data)
   }
+}
+function renderEventTraceFields(data) {
+  if (!eventTraceFields || !eventTraceId || !eventSpanId || !eventTraceLink) return
+
+  if (!data.trace_id && !data.span_id) {
+    eventTraceFields.classList.add("hidden")
+    eventTraceId.textContent = ""
+    eventSpanId.textContent = ""
+    eventTraceLink.classList.add("hidden")
+    eventTraceLink.removeAttribute("href")
+    return
+  }
+
+  eventTraceId.textContent = data.trace_id || "Unavailable"
+  eventSpanId.textContent = data.span_id || "Unavailable"
+
+  if (data.trace_id) {
+    eventTraceLink.href = `http://localhost:16686/trace/${data.trace_id}`
+    eventTraceLink.classList.remove("hidden")
+  } else {
+    eventTraceLink.classList.add("hidden")
+    eventTraceLink.removeAttribute("href")
+  }
+
+  eventTraceFields.classList.remove("hidden")
 }
 function formatEvent(data) {
   switch (data.event) {
@@ -1566,6 +1955,8 @@ function updateWorkerHealth() {
     item.classList.toggle("worker-stale", isStale)
     item.classList.toggle("worker-healthy", !isStale)
   })
+
+  updateSystemHealthPanel()
 }
 
 function getEventSeverity(data) {
@@ -1623,3 +2014,4 @@ setInterval(updateWorkerHealth, 1000)
 setInterval(updateThroughputChart, 1000)
 setInterval(updateFailureRateChart, 1000)
 setInterval(updateWorkerThroughputPanel, 1000)
+setInterval(updateSystemHealthPanel, 1000)

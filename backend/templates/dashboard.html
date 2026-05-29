@@ -47,6 +47,14 @@
     <h2>Metrics</h2>
     <pre id="metrics" class="debug-only" >Loading...</pre>
     <div id="metrics-cards" class="cards"></div>
+    <section class="panel system-health-panel">
+        <h2>System Health</h2>
+
+        <div id="system-health-card" class="system-health-card health-unknown">
+            <strong id="system-health-state">Unknown</strong>
+            <p id="system-health-reason">Waiting for metrics and live events...</p>
+        </div>
+    </section>
     <section class="panel">
         <h2>Realtime Throughput</h2>
 
@@ -91,6 +99,30 @@
         <div id="worker-throughput-empty">Not enough worker data yet</div>
         <div id="worker-throughput-list" class="worker-throughput-list hidden"></div>
     </section>
+    <section class="panel queue-latency-panel">
+        <h2>Queue Latency</h2>
+
+        <div id="queue-latency-empty">Not enough queue latency data yet</div>
+
+        <div id="queue-latency-summary" class="outcome-summary hidden">
+            <div><span>Latest wait</span><strong id="queue-latency-latest">0 ms</strong></div>
+            <div><span>Average wait</span><strong id="queue-latency-average">0 ms</strong></div>
+            <div><span>Max wait</span><strong id="queue-latency-max">0 ms</strong></div>
+            <div><span>Recent tasks</span><strong id="queue-latency-count">0</strong></div>
+        </div>
+    </section>
+    <section class="panel processing-latency-panel">
+        <h2>Processing Latency</h2>
+
+        <div id="processing-latency-empty">Not enough processing latency data yet</div>
+
+        <div id="processing-latency-summary" class="outcome-summary hidden">
+            <div><span>Latest duration</span><strong id="processing-latency-latest">0 ms</strong></div>
+            <div><span>Average duration</span><strong id="processing-latency-average">0 ms</strong></div>
+            <div><span>Max duration</span><strong id="processing-latency-max">0 ms</strong></div>
+            <div><span>Recent tasks</span><strong id="processing-latency-count">0</strong></div>
+        </div>
+    </section>
     <section class="panel">
         <h2>Live Workers</h2>
         <div id="live-workers"></div>
@@ -133,6 +165,19 @@
     <div id="event-detail-drawer" class="hidden">
         <button id="close-event-detail-btn">Close</button>
         <h2>Event Detail</h2>
+        <div id="event-trace-fields" class="trace-fields hidden">
+            <div>
+                <span>Trace ID</span>
+                <code id="event-trace-id"></code>
+            </div>
+            <div>
+                <span>Span ID</span>
+                <code id="event-span-id"></code>
+            </div>
+            <a id="event-trace-link" class="trace-link hidden" href="#" target="_blank" rel="noopener noreferrer">
+                Open Trace
+            </a>
+        </div>
         <pre id="event-detail-content"></pre>
     </div>
 

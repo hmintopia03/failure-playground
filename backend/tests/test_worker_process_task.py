@@ -1,5 +1,7 @@
 from datetime import datetime, UTC
 
+import pytest
+
 import worker
 from models import Task
 
@@ -30,6 +32,136 @@ def test_process_task_marks_task_as_success(db_session, monkeypatch):
     assert task.failure_reason is None
     assert task.processing_duration_seconds is not None
 
+
+def test_process_task_started_event_includes_queue_latency_fields(db_session, monkeypatch):
+    captured_events = []
+
+    def fake_log_event(event, **fields):
+        captured_events.append((event, fields))
+
+    created_at = datetime(2026, 5, 29, 1, 2, 3, tzinfo=UTC)
+
+    monkeypatch.setattr(worker.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(worker.random, "random", lambda: 0.99)
+    monkeypatch.setattr(worker, "WORKER_NAME", "test-worker")
+    monkeypatch.setattr(worker, "log_event", fake_log_event)
+
+    task = Task(
+        status="processing",
+        retry_count=0,
+        priority=1,
+        is_poison=False,
+        created_at=created_at,
+        processing_started_at=datetime.now(UTC),
+    )
+
+    db_session.add(task)
+    db_session.commit()
+    db_session.refresh(task)
+
+    worker.process_task(task, db_session)
+
+    started_event = next(
+        fields
+        for event, fields in captured_events
+        if event == "task_started"
+    )
+
+    assert started_event["task_id"] == task.id
+    assert started_event["created_at"] == created_at.isoformat()
+    assert started_event["queued_at"] == created_at.isoformat()
+
+
+def test_process_task_success_event_includes_processing_latency_fields(
+    db_session,
+    monkeypatch,
+):
+    captured_events = []
+
+    def fake_log_event(event, **fields):
+        captured_events.append((event, fields))
+
+    processing_started_at = datetime(2026, 5, 29, 1, 2, 3, tzinfo=UTC)
+
+    monkeypatch.setattr(worker.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(worker.random, "random", lambda: 0.99)
+    monkeypatch.setattr(worker, "WORKER_NAME", "test-worker")
+    monkeypatch.setattr(worker, "log_event", fake_log_event)
+
+    task = Task(
+        status="processing",
+        retry_count=0,
+        priority=1,
+        is_poison=False,
+        processing_started_at=processing_started_at,
+    )
+
+    db_session.add(task)
+    db_session.commit()
+    db_session.refresh(task)
+
+    worker.process_task(task, db_session)
+
+    succeeded_event = next(
+        fields
+        for event, fields in captured_events
+        if event == "task_succeeded"
+    )
+
+    assert succeeded_event["task_id"] == task.id
+    assert succeeded_event["started_at"] == processing_started_at.isoformat()
+    assert succeeded_event["processing_started_at"] == processing_started_at.isoformat()
+
+
+@pytest.mark.parametrize(
+    ("is_poison", "expected_event"),
+    [
+        (False, "task_failed"),
+        (True, "task_poisoned"),
+    ],
+)
+def test_process_task_failure_events_include_processing_latency_fields(
+    db_session,
+    monkeypatch,
+    is_poison,
+    expected_event,
+):
+    captured_events = []
+
+    def fake_log_event(event, **fields):
+        captured_events.append((event, fields))
+
+    processing_started_at = datetime(2026, 5, 29, 1, 2, 3, tzinfo=UTC)
+
+    monkeypatch.setattr(worker.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(worker.random, "random", lambda: 0.1)
+    monkeypatch.setattr(worker.random, "choice", lambda reasons: "database_error")
+    monkeypatch.setattr(worker, "WORKER_NAME", "test-worker")
+    monkeypatch.setattr(worker, "log_event", fake_log_event)
+
+    task = Task(
+        status="processing",
+        retry_count=worker.MAX_RETRIES - 1,
+        priority=1,
+        is_poison=is_poison,
+        processing_started_at=processing_started_at,
+    )
+
+    db_session.add(task)
+    db_session.commit()
+    db_session.refresh(task)
+
+    worker.process_task(task, db_session)
+
+    terminal_event = next(
+        fields
+        for event, fields in captured_events
+        if event == expected_event
+    )
+
+    assert terminal_event["task_id"] == task.id
+    assert terminal_event["started_at"] == processing_started_at.isoformat()
+    assert terminal_event["processing_started_at"] == processing_started_at.isoformat()
 
 
 def test_process_task_retries_failed_task(db_session, monkeypatch):

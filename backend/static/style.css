@@ -116,6 +116,62 @@ body.dark-mode #top-bar {
   max-width: 700px;
 }
 
+.queue-latency-panel {
+  max-width: 700px;
+}
+
+.processing-latency-panel {
+  max-width: 700px;
+}
+
+.system-health-panel {
+  max-width: 700px;
+}
+
+.system-health-card {
+  padding: 14px 16px;
+  border: 1px solid #ddd;
+  border-left: 6px solid #64748b;
+  border-radius: 10px;
+  background: rgba(100, 116, 139, 0.08);
+}
+
+.system-health-card strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 22px;
+}
+
+.system-health-card p {
+  margin: 0;
+  color: #475569;
+}
+
+.health-healthy {
+  border-left-color: #16a34a;
+  background: rgba(22, 163, 74, 0.1);
+}
+
+.health-queue-pressure {
+  border-left-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.health-processing-bottleneck {
+  border-left-color: #ea580c;
+  background: rgba(234, 88, 12, 0.12);
+}
+
+.health-failure-spike {
+  border-left-color: #dc2626;
+  background: rgba(220, 38, 38, 0.12);
+}
+
+.health-unknown {
+  border-left-color: #64748b;
+  background: rgba(100, 116, 139, 0.08);
+}
+
 .panel-heading {
   display: flex;
   align-items: center;
@@ -162,6 +218,20 @@ body.dark-mode #top-bar {
 }
 
 #worker-throughput-empty {
+  padding: 18px 12px;
+  color: #666;
+  background: rgba(0,0,0,0.03);
+  border-radius: 8px;
+}
+
+#queue-latency-empty {
+  padding: 18px 12px;
+  color: #666;
+  background: rgba(0,0,0,0.03);
+  border-radius: 8px;
+}
+
+#processing-latency-empty {
   padding: 18px 12px;
   color: #666;
   background: rgba(0,0,0,0.03);
@@ -392,6 +462,51 @@ body.dark-mode #top-bar {
 #event-detail-content {
   white-space: pre-wrap;
   font-family: monospace;
+}
+
+.trace-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+}
+
+.trace-fields.hidden {
+  display: none;
+}
+
+.trace-fields span {
+  display: block;
+  color: #1e40af;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.trace-fields code {
+  word-break: break-all;
+}
+
+.trace-link {
+  align-self: flex-start;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #2563eb;
+  color: white;
+  font-family: Arial, sans-serif;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.trace-link.hidden {
+  display: none;
+}
+
+.trace-link:hover {
+  background: #1d4ed8;
 }
 
 .severity-info {

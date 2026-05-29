@@ -82,6 +82,15 @@ def ensure_utc(value):
     return value
 
 
+def isoformat_utc(value):
+    value = ensure_utc(value)
+
+    if value is None:
+        return None
+
+    return value.isoformat()
+
+
 def process_task(task: Task, db: Session):
     add_log(db, task.id, f"{WORKER_NAME}: Task started processing")
 
@@ -92,6 +101,8 @@ def process_task(task: Task, db: Session):
             retry_count=task.retry_count,
             priority=task.priority,
             is_poison=task.is_poison,
+            created_at=isoformat_utc(task.created_at),
+            queued_at=isoformat_utc(task.created_at),
         )
 
     time.sleep(2)
@@ -135,6 +146,8 @@ def process_task(task: Task, db: Session):
                     worker_name=WORKER_NAME,
                     retry_count=task.retry_count,
                     failure_reason=task.failure_reason,
+                    started_at=isoformat_utc(task.processing_started_at),
+                    processing_started_at=isoformat_utc(task.processing_started_at),
                 )
 
         else:
@@ -199,6 +212,8 @@ def process_task(task: Task, db: Session):
                 worker_name=WORKER_NAME,
                 retry_count=task.retry_count,
                 processing_duration_seconds=task.processing_duration_seconds,
+                started_at=isoformat_utc(task.processing_started_at),
+                processing_started_at=isoformat_utc(task.processing_started_at),
             )
 
 

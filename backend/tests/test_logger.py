@@ -1,6 +1,13 @@
 import json
 
 import logger
+from opentelemetry import trace
+from opentelemetry.trace import (
+    NonRecordingSpan,
+    SpanContext,
+    TraceFlags,
+    TraceState,
+)
 
 
 class FakeRedis:
@@ -74,3 +81,25 @@ def test_worker_heartbeat_streams_live_without_displacing_event_history(monkeypa
     assert len(stored) == 1
     assert json.loads(stored[0])["event"] == "task_created"
     assert len(fake_redis.published) == 2
+
+
+def test_log_event_includes_current_trace_context(monkeypatch, caplog):
+    fake_redis = FakeRedis()
+    monkeypatch.setattr(logger, "redis_client", fake_redis)
+    span_context = SpanContext(
+        trace_id=0x1234567890ABCDEF1234567890ABCDEF,
+        span_id=0x1234567890ABCDEF,
+        is_remote=False,
+        trace_flags=TraceFlags(TraceFlags.SAMPLED),
+        trace_state=TraceState(),
+    )
+
+    with trace.use_span(NonRecordingSpan(span_context), end_on_exit=False):
+        with caplog.at_level("INFO", logger="failure_playground"):
+            logger.log_event("task_succeeded", task_id=123)
+
+    payload = json.loads(caplog.records[0].message)
+
+    assert payload["trace_id"] == "1234567890abcdef1234567890abcdef"
+    assert payload["span_id"] == "1234567890abcdef"
+    assert payload["event_id"]
