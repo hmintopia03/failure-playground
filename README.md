@@ -1,23 +1,24 @@
 # Failure Playground
 
-**Failure Playground** is a local **Platform Engineering & Observability Playground** for exploring distributed worker systems, failure handling, realtime operational signals, and trace-driven debugging.
+**Failure Playground** is a local **platform engineering and observability playground** for distributed task processing, operational visibility, resilience patterns, and Kubernetes-based deployment.
 
-It simulates a production-style asynchronous task-processing platform using FastAPI, PostgreSQL, Redis, worker processes, Prometheus, Grafana, OpenTelemetry, Jaeger, and a realtime operations dashboard.
+It models a small production-style platform using FastAPI, PostgreSQL, Redis, worker replicas, Prometheus, Grafana, OpenTelemetry, Jaeger, a realtime operations dashboard, and Kubernetes manifests for the application and observability stack.
 
-The project is intentionally not a product application. It is a systems playground for answering questions platform and infrastructure engineers care about:
+The project is intentionally not a production-ready product. It is a systems playground for answering questions platform and infrastructure engineers care about:
 
 - What happens when tasks fail, retry, or become poison?
 - How do workers coordinate through a queue while PostgreSQL remains the source of truth?
 - How does an operator notice queue pressure, slow workers, failure spikes, or stale workers?
 - How can realtime events, metrics, logs, and traces be connected into one operational view?
+- How does a Dockerized local stack map into Kubernetes Deployments, Services, persistent storage, and autoscaling?
 
 ---
 
 ## Current Status
 
-**Current version:** `v4.0-c` — Kubernetes Worker Autoscaling
+**Current version:** `v4.0-d` - README Production Polish
 
-The project now includes local Kubernetes manifests for the core application stack, observability stack, and worker autoscaling while preserving the existing Docker Compose workflow. The realtime operations dashboard still includes event replay, reconnect recovery, replay-safe derived metrics, trace correlation, latency visualization, and operator-facing health interpretation.
+The project now includes local Kubernetes manifests for the core application stack, observability stack, and worker autoscaling while preserving the existing Docker Compose workflow. The documentation now frames the project as a portfolio-grade platform engineering system rather than only a task queue demo.
 
 Current dashboard capabilities include:
 
@@ -61,6 +62,15 @@ It is designed to be understandable on one machine while still exposing problems
 
 ---
 
+## Release Progression
+
+- **v1:** task queue, worker processes, retries, poison tasks, and a Dockerized FastAPI/PostgreSQL/Redis stack.
+- **v2:** WebSocket operations dashboard, reconnect recovery, Redis replay history, and `event_id` deduplication.
+- **v3:** OpenTelemetry tracing, Jaeger trace links, latency charts, throughput monitoring, System Health, Delivery Metrics, and Incident Workflow.
+- **v4:** Kubernetes core stack, Kubernetes observability stack migration, and worker autoscaling with a HorizontalPodAutoscaler.
+
+---
+
 ## Core Stack
 
 ### Backend
@@ -98,6 +108,12 @@ It is designed to be understandable on one machine while still exposing problems
 ---
 
 ## Architecture
+
+Failure Playground has three connected layers:
+
+- **Application layer:** FastAPI provides the HTTP control plane, API docs, health checks, Prometheus scrape endpoint, and WebSocket bridge. Worker replicas consume Redis queue entries, update PostgreSQL state, emit heartbeats, and simulate retries, poison tasks, stuck work, and failures.
+- **Operational signal layer:** Redis acts as a queue, a pub/sub event bus, and bounded replay history. The WebSocket operations dashboard consumes replayed and live events, deduplicates by `event_id`, and derives operator-facing views such as throughput, latency, System Health, Delivery Metrics, and Incident Workflow.
+- **Observability and platform layer:** OpenTelemetry exports API and worker spans to Jaeger, Prometheus scrapes the API through Kubernetes service DNS, and Grafana provides metrics dashboards. Kubernetes runs the stack with Deployments, Services, a PostgreSQL PersistentVolumeClaim, shared ConfigMap configuration, and a worker HorizontalPodAutoscaler.
 
 ```
                                   +-------------------+
@@ -689,19 +705,17 @@ websocat ws://localhost:8001/ws/operations
 
 ## Running The Stack On Kubernetes
 
-Failure Playground v4.0-b includes simple Kubernetes manifests under [k8s/](/C:/Users/hmint/failure-playground/k8s) for the application and observability stack:
+The Kubernetes manifests under [k8s/](/C:/Users/hmint/failure-playground/k8s) map the Docker Compose stack into local Kubernetes primitives without changing the Compose workflow.
 
-- API Deployment and Service
-- Worker Deployment with 2 replicas
-- Redis Deployment and Service
-- PostgreSQL Deployment, Service, and PersistentVolumeClaim
-- Shared ConfigMap
-- Jaeger Deployment and Service
-- Prometheus ConfigMap, Deployment, and Service
-- Grafana Deployment and Service
-- Worker HorizontalPodAutoscaler
+- `api`, `worker`, `postgres`, and `redis` run as Deployments.
+- `api-service`, `postgres-service`, and `redis-service` provide in-cluster DNS and stable networking.
+- The worker runs as a replica-based Deployment, replacing Compose `worker-a` and `worker-b`.
+- Compose `postgres_data` maps to a PostgreSQL PersistentVolumeClaim.
+- Shared environment configuration maps to a Kubernetes ConfigMap.
+- Jaeger, Prometheus, and Grafana run as Kubernetes Deployments and Services.
+- Worker autoscaling is handled by `worker-hpa`, with 2 to 5 replicas and a 70% CPU utilization target.
 
-Grafana runs on Kubernetes in v4.0-b, but dashboard provisioning may remain Docker Compose-first until that setup is worth migrating cleanly.
+Grafana runs on Kubernetes, but dashboard provisioning may remain Docker Compose-first until that setup is worth migrating cleanly.
 
 Build the backend image from the existing Dockerfile:
 
@@ -716,17 +730,29 @@ kubectl apply -f k8s/
 kubectl get pods
 kubectl get svc
 kubectl get hpa
-kubectl describe hpa worker-hpa
+kubectl logs deployment/api
+kubectl logs deployment/worker
+```
+
+Open the API locally:
+
+```bash
 kubectl port-forward service/api-service 8001:8000
-kubectl port-forward service/jaeger-service 16686:16686
-kubectl port-forward service/prometheus-service 9091:9090
-kubectl port-forward service/grafana-service 3000:3000
 ```
 
 Then open:
 
 - Dashboard: <http://localhost:8001>
 - API docs: <http://localhost:8001/docs>
+
+Access the observability tools:
+
+```bash
+kubectl port-forward service/jaeger-service 16686:16686
+kubectl port-forward service/prometheus-service 9091:9090
+kubectl port-forward service/grafana-service 3000:3000
+```
+
 - Jaeger: <http://localhost:16686>
 - Prometheus: <http://localhost:9091>
 - Grafana: <http://localhost:3000>
@@ -742,7 +768,8 @@ kubectl apply -f k8s/
 kubectl get pods
 kubectl get svc
 kubectl get hpa
-kubectl describe hpa worker-hpa
+kubectl logs deployment/api
+kubectl logs deployment/worker
 kubectl logs deployment/jaeger
 kubectl logs deployment/prometheus
 kubectl logs deployment/grafana
@@ -810,6 +837,14 @@ These tradeoffs keep the playground small enough to understand while still surfa
 ---
 
 ## Version History
+
+### v4.0-d - README Production Polish
+
+- Reframed the project as a platform engineering and observability portfolio system
+- Clarified architecture across API, workers, Redis, PostgreSQL, WebSocket dashboard, OpenTelemetry, Jaeger, Prometheus, Grafana, and Kubernetes
+- Added release progression from v1 through v4
+- Improved Kubernetes deployment, verification, observability access, limitations, and roadmap documentation
+- Existing Docker Compose workflow preserved
 
 ### v4.0-c — Kubernetes Worker Autoscaling
 
@@ -962,54 +997,25 @@ These tradeoffs keep the playground small enough to understand while still surfa
 
 ---
 
-## Current Limitations
+## Known Limitations
 
-This project is designed for local platform engineering learning, not production deployment.
+Failure Playground is designed for local platform engineering learning and portfolio demonstration, not production readiness.
 
+- Kubernetes manifests target single-node or local clusters.
+- Incident Workflow state is frontend-only.
+- Grafana dashboard provisioning may still be Docker Compose-first.
+- There is no authentication, authorization, or RBAC yet.
+- There is no persistent incident storage yet.
+- PostgreSQL and Redis are local containerized services, not production-grade managed database or cache setups.
+- Worker HPA requires `metrics-server` to be installed and healthy in the local cluster.
 - Redis replay history is intentionally limited to the latest 100 non-heartbeat events.
-- Dashboard metrics are derived from operational events, not from a durable metrics or analytics backend.
-- Realtime operational history is optimized for short-term visibility, not audit-grade retention.
-- There is no authentication, authorization, or RBAC.
-- Grafana dashboard provisioning is still Docker Compose-first unless migrated separately.
-- There is no Kafka or durable event-streaming layer.
-- Grafana covers core system metrics, but latency-specific Grafana panels are still limited compared with the browser dashboard.
-- Incident workflow state is frontend-only browser-local state; acknowledgements and resolved incidents are not yet coordinated across operators or stored durably in the backend.
+- Realtime operational history is short-term operator context, not audit-grade retention.
 
 ---
 
-## Future Improvements
+## Next Roadmap
 
-Future work is focused on deeper platform concerns rather than features already implemented in the realtime dashboard.
-
-### Observability Depth
-
-- Add Grafana latency dashboards for queue wait, processing duration, and per-worker latency distribution.
-- Expose dashboard delivery metrics to Prometheus: connected clients, reconnect count, replay count, WebSocket message throughput, and event delivery lag.
-- Improve trace correlation with richer span attributes, task IDs as searchable trace attributes, and clearer links between retry attempts.
-- Add per-priority queue latency and processing latency views.
-- Add cross-worker latency heatmaps to surface uneven load and slow workers.
-
-### Event Retention and Streaming
-
-- Store operational events in PostgreSQL or a time-series/event store for post-incident review beyond the latest 100 Redis events.
-- Explore Kafka as a durable event stream with replay, consumer lag, partitioning, and broker-health concerns.
-- Compare Redis pub/sub, Redis Streams, Kafka, and database-backed event storage for this workload.
-
-### Platform Scale
-
-- Add a Helm chart or Kustomize overlays for the Kubernetes stack.
-- Explore worker autoscaling based on queue depth or latency beyond the current CPU-based HPA.
-- Add liveness/readiness probes and test pod disruption behavior.
-- Model multi-worker deployment failure modes more explicitly.
-
-### Security and Operations
-
-- Add authentication and RBAC for dashboard and control-plane actions.
-- Split read-only dashboard access from destructive controls such as queue clearing and reset.
-- Add backend incident persistence, shared acknowledgement, and audit history across browser sessions.
-- Add audit logging for operator actions.
-
-### Comparative Worker Frameworks
-
-- Rebuild the same failure scenarios with Celery, RQ, or Temporal.
-- Compare retry semantics, observability hooks, and operational complexity across worker frameworks.
+- **v5.0:** CI/CD with GitHub Actions for build, test, and deployment validation.
+- **v5.1:** Prometheus alert rules for queue pressure, worker health, failure spikes, and dependency degradation.
+- **v5.2:** RBAC for dashboard operations, separating read-only visibility from destructive controls.
+- **v6.0:** Kafka or another durable event-streaming layer for replay, consumer lag, partitioning, and event retention experiments.
