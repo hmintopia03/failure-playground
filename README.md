@@ -1,4 +1,4 @@
-# Failure Playground
+﻿# Failure Playground
 
 [![CI](https://github.com/hmintopia03/failure-playground/actions/workflows/ci.yml/badge.svg)](https://github.com/hmintopia03/failure-playground/actions/workflows/ci.yml)
 
@@ -47,37 +47,8 @@ The system consists of four main layers:
 - **Platform Layer** ??The stack runs through Docker Compose locally and Kubernetes manifests for deployment, persistent storage, observability services, and worker autoscaling.
     
 
-```text
-+-------------+        HTTP         +-------------+
-| Operators   +-------------------->| FastAPI API |
-| / clients   |                     | REST + WS   |
-+-------------+                     +------+------+ 
-                                           |
-                         +-----------------+-----------------+
-                         |                                   |
-                         v                                   v
-                  +-------------+                     +-------------+
-                  | PostgreSQL  |                     | Redis Queue |
-                  | tasks/logs  |                     | task IDs    |
-                  +------+------+                     +------+------+
-                         ^                                   |
-                         |                                   v
-                         |                            +-------------+
-                         |                            | Workers     |
-                         |                            | retry/claim |
-                         |                            +------+------+
-                         |                                   |
-                         | operational events                v
-                         |                            +-------------+
-                         +----------------------------+ Redis       |
-                                                      | Pub/Sub     |
-                                                      +------+------+
-                                                             |
-                                                             v
-                                                      +-------------+
-                                                      | WebSocket   |
-                                                      | Dashboard   |
-                                                      +-------------+
+![architecture](backend/images/architecture.png)
+
 
 Observability:
 FastAPI + Workers -> OpenTelemetry -> Jaeger
@@ -105,7 +76,7 @@ OpenTelemetry traces are exported to Jaeger, while Prometheus collects metrics t
 
 PostgreSQL remains the source of truth for task state. Redis is used as transport and short-term operational memory, creating realistic distributed-system scenarios such as duplicate delivery, stale workers, retry storms, and replay boundaries.
 
-For the complete architecture notes, see [architecture.md](architecture.md).
+For the complete architecture notes, see [architecture.md](docs/architecture.md).
 
 ---
 
