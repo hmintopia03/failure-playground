@@ -51,6 +51,13 @@ const failureRateValueEl = document.getElementById("failure-rate-value")
 const failureRetryCountEl = document.getElementById("failure-retry-count")
 const failureTerminalCountEl = document.getElementById("failure-terminal-count")
 const failureRateEvents = []
+const deliveryMetricsWindowEl = document.getElementById("delivery-metrics-window")
+const deliveryMetricsEmptyEl = document.getElementById("delivery-metrics-empty")
+const deliveryMetricsSummaryEl = document.getElementById("delivery-metrics-summary")
+const deliverySuccessRateEl = document.getElementById("delivery-success-rate")
+const deliveryRetryRateEl = document.getElementById("delivery-retry-rate")
+const deliveryPoisonRateEl = document.getElementById("delivery-poison-rate")
+const deliveryEventCountEl = document.getElementById("delivery-event-count")
 const workerThroughputWindowEl = document.getElementById("worker-throughput-window")
 const workerThroughputEmptyEl = document.getElementById("worker-throughput-empty")
 const workerThroughputListEl = document.getElementById("worker-throughput-list")
@@ -921,6 +928,10 @@ function initializeDashboardEventListeners() {
     failureRateWindowEl.addEventListener("change", updateFailureRateChart)
   }
 
+  if (deliveryMetricsWindowEl) {
+    deliveryMetricsWindowEl.addEventListener("change", updateDeliveryMetricsPanel)
+  }
+
   if (workerThroughputWindowEl) {
     workerThroughputWindowEl.addEventListener("change", updateWorkerThroughputPanel)
   }
@@ -1200,6 +1211,7 @@ function updateFailureRateChart() {
     failureRateChart.data.labels = []
     failureRateChart.data.datasets[0].data = []
     failureRateChart.update()
+    updateDeliveryMetricsPanel()
     updateSystemHealthPanel()
     return
   }
@@ -1229,7 +1241,58 @@ function updateFailureRateChart() {
   failureRateChart.data.labels = labels
   failureRateChart.data.datasets[0].data = points
   failureRateChart.update()
+  updateDeliveryMetricsPanel()
   updateSystemHealthPanel()
+}
+
+function updateDeliveryMetricsPanel() {
+  if (
+    !deliveryMetricsEmptyEl ||
+    !deliveryMetricsSummaryEl ||
+    !deliverySuccessRateEl ||
+    !deliveryRetryRateEl ||
+    !deliveryPoisonRateEl ||
+    !deliveryEventCountEl
+  ) {
+    return
+  }
+
+  trimFailureRateEvents()
+
+  const windowMs = Number(deliveryMetricsWindowEl ? deliveryMetricsWindowEl.value : 60_000)
+  const cutoff = Date.now() - windowMs
+  const windowEvents = failureRateEvents.filter((event) => event.timestamp >= cutoff)
+  const terminalEvents = windowEvents.filter((event) => isTerminalTaskEvent(event.event))
+  const succeededEvents = terminalEvents.filter((event) => event.event === "task_succeeded")
+  const poisonEvents = terminalEvents.filter((event) => event.event === "task_poisoned")
+  const retryEvents = windowEvents.filter((event) => event.event === "task_retried")
+  const denominator = terminalEvents.length + retryEvents.length
+
+  if (!denominator) {
+    deliveryMetricsEmptyEl.classList.remove("hidden")
+    deliveryMetricsSummaryEl.classList.add("hidden")
+    deliverySuccessRateEl.textContent = "0%"
+    deliveryRetryRateEl.textContent = "0%"
+    deliveryPoisonRateEl.textContent = "0%"
+    deliveryEventCountEl.textContent = "0"
+    return
+  }
+
+  const successRate = terminalEvents.length
+    ? Math.round((succeededEvents.length / terminalEvents.length) * 100)
+    : 0
+  const retryRate = Math.round((retryEvents.length / denominator) * 100)
+  const poisonRate = terminalEvents.length
+    ? Math.round((poisonEvents.length / terminalEvents.length) * 100)
+    : 0
+
+  deliverySuccessRateEl.textContent = `${successRate}%`
+  deliveryRetryRateEl.textContent = `${retryRate}%`
+  deliveryPoisonRateEl.textContent = `${poisonRate}%`
+  deliveryEventCountEl.textContent = denominator
+
+  deliveryMetricsEmptyEl.classList.add("hidden")
+  deliveryMetricsSummaryEl.classList.remove("hidden")
 }
 
 function rememberThroughputWorker(workerName) {
@@ -2013,5 +2076,6 @@ function applyLiveEventSearchFilter() {
 setInterval(updateWorkerHealth, 1000)
 setInterval(updateThroughputChart, 1000)
 setInterval(updateFailureRateChart, 1000)
+setInterval(updateDeliveryMetricsPanel, 1000)
 setInterval(updateWorkerThroughputPanel, 1000)
 setInterval(updateSystemHealthPanel, 1000)

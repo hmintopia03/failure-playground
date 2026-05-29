@@ -15,7 +15,7 @@ The project is intentionally not a product application. It is a systems playgrou
 
 ## Current Status
 
-**Current version:** `v3.5` — Platform Engineering & Observability Playground
+**Current version:** `v3.6` — Platform Engineering & Observability Playground
 
 The project now includes a resilient realtime operations dashboard with event replay, reconnect recovery, replay-safe derived metrics, trace correlation, latency visualization, and operator-facing health interpretation.
 
@@ -25,6 +25,7 @@ Current dashboard capabilities include:
 - Redis-backed operational event replay after refresh or reconnect
 - `event_id`-based deduplication for replay-safe metrics
 - Rolling failure-rate and retry metrics
+- Delivery metrics for success, retry, and poison rates
 - Per-worker throughput over rolling 10s / 60s windows
 - Idle worker visibility
 - Queue latency visualization
@@ -279,6 +280,7 @@ Unexpected disconnects trigger automatic reconnect with simple exponential backo
 Each event has a stable `event_id`. The dashboard keeps a bounded set of received IDs and ignores duplicates. This prevents replayed events from inflating:
 
 - failure-rate calculations
+- delivery metrics
 - retry counts
 - worker throughput
 - queue latency
@@ -291,6 +293,7 @@ Each event has a stable `event_id`. The dashboard keeps a bounded set of receive
 The realtime dashboard does not only render event rows. It derives short-window operational signals from the event stream:
 
 - Is the system failing recently?
+- Are tasks succeeding, retrying, or becoming poison at concerning rates?
 - Are workers keeping up?
 - Are tasks waiting too long in the queue?
 - Are workers spending too long processing tasks?
@@ -330,6 +333,20 @@ The browser dashboard is the primary local operations console. It ships from the
 - Terminal event count display
 - Recalculation from replayed history
 - Live updates as task outcomes arrive
+
+### Delivery Metrics
+
+- Success rate over the selected recent window
+- Retry rate over the selected recent window
+- Poison rate over the selected recent window
+- Event count used in the calculation
+- Rebuilt from Redis replay and updated live after `event_id` deduplication
+
+The panel uses the existing operational event stream:
+
+- `task_succeeded` contributes to success rate
+- `task_retried` contributes to retry rate
+- `task_poisoned` contributes to poison rate
 
 ### Worker Throughput
 
@@ -697,6 +714,13 @@ These tradeoffs keep the playground small enough to understand while still surfa
 ---
 
 ## Version History
+
+### v3.6 — Dashboard Delivery Metrics
+
+- Delivery Metrics panel
+- Success rate, retry rate, and poison rate over recent windows
+- Replay-safe reconstruction from Redis event history
+- Reconnect-safe and refresh-safe calculations through `event_id` deduplication
 
 ### v3.5 — System Health and Bottleneck Detection
 

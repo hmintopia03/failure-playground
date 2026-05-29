@@ -112,6 +112,10 @@ body.dark-mode #top-bar {
   max-width: 700px;
 }
 
+.delivery-metrics-panel {
+  max-width: 700px;
+}
+
 .worker-throughput-panel {
   max-width: 700px;
 }
@@ -184,6 +188,13 @@ body.dark-mode #top-bar {
 }
 
 #failure-rate-empty {
+  padding: 18px 12px;
+  color: #666;
+  background: rgba(0,0,0,0.03);
+  border-radius: 8px;
+}
+
+#delivery-metrics-empty {
   padding: 18px 12px;
   color: #666;
   background: rgba(0,0,0,0.03);

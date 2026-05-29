@@ -84,6 +84,27 @@
             <canvas id="failure-rate-chart"></canvas>
         </div>
     </section>
+    <section class="panel delivery-metrics-panel">
+        <div class="panel-heading">
+            <h2>Delivery Metrics</h2>
+            <label>
+                Window:
+                <select id="delivery-metrics-window">
+                    <option value="60000" selected>Last 1 minute</option>
+                    <option value="300000">Last 5 minutes</option>
+                </select>
+            </label>
+        </div>
+
+        <div id="delivery-metrics-empty">Not enough delivery events yet</div>
+
+        <div id="delivery-metrics-summary" class="outcome-summary hidden">
+            <div><span>Success</span><strong id="delivery-success-rate">0%</strong></div>
+            <div><span>Retry</span><strong id="delivery-retry-rate">0%</strong></div>
+            <div><span>Poison</span><strong id="delivery-poison-rate">0%</strong></div>
+            <div><span>Events used</span><strong id="delivery-event-count">0</strong></div>
+        </div>
+    </section>
     <section class="panel worker-throughput-panel">
         <div class="panel-heading">
             <h2>Worker Throughput</h2>
