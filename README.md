@@ -15,9 +15,9 @@ The project is intentionally not a product application. It is a systems playgrou
 
 ## Current Status
 
-**Current version:** `v4.0-b` — Kubernetes Observability Stack Migration
+**Current version:** `v4.0-c` — Kubernetes Worker Autoscaling
 
-The project now includes local Kubernetes manifests for the core application and observability stack while preserving the existing Docker Compose workflow. The realtime operations dashboard still includes event replay, reconnect recovery, replay-safe derived metrics, trace correlation, latency visualization, and operator-facing health interpretation.
+The project now includes local Kubernetes manifests for the core application stack, observability stack, and worker autoscaling while preserving the existing Docker Compose workflow. The realtime operations dashboard still includes event replay, reconnect recovery, replay-safe derived metrics, trace correlation, latency visualization, and operator-facing health interpretation.
 
 Current dashboard capabilities include:
 
@@ -699,6 +699,7 @@ Failure Playground v4.0-b includes simple Kubernetes manifests under [k8s/](/C:/
 - Jaeger Deployment and Service
 - Prometheus ConfigMap, Deployment, and Service
 - Grafana Deployment and Service
+- Worker HorizontalPodAutoscaler
 
 Grafana runs on Kubernetes in v4.0-b, but dashboard provisioning may remain Docker Compose-first until that setup is worth migrating cleanly.
 
@@ -714,6 +715,8 @@ Apply the manifests:
 kubectl apply -f k8s/
 kubectl get pods
 kubectl get svc
+kubectl get hpa
+kubectl describe hpa worker-hpa
 kubectl port-forward service/api-service 8001:8000
 kubectl port-forward service/jaeger-service 16686:16686
 kubectl port-forward service/prometheus-service 9091:9090
@@ -730,12 +733,16 @@ Then open:
 
 Kubernetes does not support Docker Compose `depends_on` directly. The manifests use service discovery, pod restarts, and readiness/liveness probes where reasonable. The Kubernetes service names used by the app are `postgres-service`, `redis-service`, and `jaeger-service`. Prometheus scrapes `/prometheus` through `api-service:8000`.
 
+The worker HPA keeps the worker Deployment between 2 and 5 pods and targets 70% average CPU utilization. It requires `metrics-server` to be available in the local Kubernetes cluster; unknown HPA CPU metrics usually mean `metrics-server` is missing or not ready.
+
 Useful verification commands:
 
 ```bash
 kubectl apply -f k8s/
 kubectl get pods
 kubectl get svc
+kubectl get hpa
+kubectl describe hpa worker-hpa
 kubectl logs deployment/jaeger
 kubectl logs deployment/prometheus
 kubectl logs deployment/grafana
@@ -803,6 +810,15 @@ These tradeoffs keep the playground small enough to understand while still surfa
 ---
 
 ## Version History
+
+### v4.0-c — Kubernetes Worker Autoscaling
+
+- Worker Deployment now has CPU and memory requests and limits
+- Added `worker-hpa` HorizontalPodAutoscaler
+- Worker autoscaling keeps 2 to 5 replicas
+- HPA targets 70% average CPU utilization
+- Documented `metrics-server` requirement for local Kubernetes clusters
+- Existing Docker Compose workflow preserved
 
 ### v4.0-b — Kubernetes Observability Stack Migration
 
@@ -982,7 +998,7 @@ Future work is focused on deeper platform concerns rather than features already 
 ### Platform Scale
 
 - Add a Helm chart or Kustomize overlays for the Kubernetes stack.
-- Explore worker autoscaling based on queue depth or latency.
+- Explore worker autoscaling based on queue depth or latency beyond the current CPU-based HPA.
 - Add liveness/readiness probes and test pod disruption behavior.
 - Model multi-worker deployment failure modes more explicitly.
 

@@ -3,7 +3,7 @@
 These manifests run Failure Playground on a local Kubernetes cluster:
 
 - FastAPI API
-- Worker Deployment with 2 replicas
+- Worker Deployment with 2 replicas and optional CPU-based autoscaling
 - Redis
 - PostgreSQL with a PersistentVolumeClaim
 - Jaeger
@@ -37,6 +37,25 @@ kubectl get svc
 ```
 
 The API Deployment runs Alembic migrations before starting Uvicorn. Kubernetes does not support Docker Compose `depends_on` directly, so startup ordering is handled by normal pod restarts and readiness probes.
+
+## Worker Autoscaling
+
+The worker Deployment includes resource requests and limits so Kubernetes can reason about CPU utilization. `worker-hpa.yaml` adds a HorizontalPodAutoscaler that keeps at least 2 worker pods, can scale up to 5 pods, and targets 70% average CPU utilization.
+
+Apply it with the rest of the stack:
+
+```bash
+kubectl apply -f k8s/
+```
+
+Check the autoscaler:
+
+```bash
+kubectl get hpa
+kubectl describe hpa worker-hpa
+```
+
+The HPA requires `metrics-server` to be available in the local Kubernetes cluster. If `kubectl get hpa` shows unknown CPU metrics, install or enable `metrics-server` for your cluster.
 
 ## Open The Services Locally
 
@@ -95,6 +114,8 @@ Useful checks after applying the manifests:
 kubectl apply -f k8s/
 kubectl get pods
 kubectl get svc
+kubectl get hpa
+kubectl describe hpa worker-hpa
 kubectl logs deployment/jaeger
 kubectl logs deployment/prometheus
 kubectl logs deployment/grafana
