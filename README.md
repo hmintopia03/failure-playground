@@ -735,6 +735,24 @@ a PostgreSQL PersistentVolumeClaim, and a worker HPA.
 
 ![Kubernetes HPA](backend/images/k8s-hpa.png)
 
+---
+
+### Linux Development Environment
+
+The project is now developed and verified primarily on Linux/Ubuntu.
+
+Linux is used for:
+
+- Docker and Kubernetes local runtime
+- kubectl-based deployment verification
+- container image builds
+- log inspection
+- port forwarding
+- local platform operations practice
+
+The Docker Compose workflow still works, but the Kubernetes workflow is now the main platform-engineering path for v4.0 verification.
+
+
 ## Running The Stack On Kubernetes
 
 The Kubernetes manifests under [k8s/](/C:/Users/hmint/failure-playground/k8s) map the Docker Compose stack into local Kubernetes primitives without changing the Compose workflow.
