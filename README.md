@@ -109,11 +109,12 @@ It is designed to be understandable on one machine while still exposing problems
 
 ## Architecture
 
-Failure Playground has three connected layers:
+Failure Playground has three connected layers. The diagram below reflects the v4.0 system after System Health, Delivery Metrics, Incident Workflow, Kubernetes deployment manifests, Kubernetes observability manifests, and worker autoscaling.
 
-- **Application layer:** FastAPI provides the HTTP control plane, API docs, health checks, Prometheus scrape endpoint, and WebSocket bridge. Worker replicas consume Redis queue entries, update PostgreSQL state, emit heartbeats, and simulate retries, poison tasks, stuck work, and failures.
-- **Operational signal layer:** Redis acts as a queue, a pub/sub event bus, and bounded replay history. The WebSocket operations dashboard consumes replayed and live events, deduplicates by `event_id`, and derives operator-facing views such as throughput, latency, System Health, Delivery Metrics, and Incident Workflow.
-- **Observability and platform layer:** OpenTelemetry exports API and worker spans to Jaeger, Prometheus scrapes the API through Kubernetes service DNS, and Grafana provides metrics dashboards. Kubernetes runs the stack with Deployments, Services, a PostgreSQL PersistentVolumeClaim, shared ConfigMap configuration, and a worker HorizontalPodAutoscaler.
+- **Application layer:** FastAPI provides the HTTP control plane, API docs, health checks, `/prometheus` endpoint, and WebSocket bridge. Worker replicas consume Redis queue entries, update PostgreSQL state, emit heartbeats, and simulate retries, poison tasks, stuck work, and failures.
+- **Operational signal layer:** Redis acts as a queue, a pub/sub event bus, and bounded replay history. The WebSocket operations dashboard consumes replayed and live WebSocket events, and Redis replay makes refresh/reconnect recovery possible.
+- **Operator intelligence layer:** Operator-facing metrics are derived from event history, including Failure Rate Metrics, Delivery Metrics, Queue Latency Metrics, Processing Latency Metrics, Per-worker Throughput, System Health, and Incident Workflow state.
+- **Observability and platform layer:** OpenTelemetry connects API and worker spans to Jaeger, Prometheus scrapes the FastAPI `/prometheus` endpoint, and Grafana visualizes system dashboards. Kubernetes now runs the core and observability stack through manifests with Deployments, Services, a PostgreSQL PersistentVolumeClaim, shared ConfigMap configuration, and a worker HorizontalPodAutoscaler.
 
 ```
                                   +-------------------+
