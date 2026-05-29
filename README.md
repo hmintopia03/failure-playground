@@ -15,9 +15,9 @@ The project is intentionally not a product application. It is a systems playgrou
 
 ## Current Status
 
-**Current version:** `v3.7` — Platform Engineering & Observability Playground
+**Current version:** `v4.0-a` — Kubernetes Core Stack Migration
 
-The project now includes a resilient realtime operations dashboard with event replay, reconnect recovery, replay-safe derived metrics, trace correlation, latency visualization, and operator-facing health interpretation.
+The project now includes local Kubernetes manifests for the core application stack while preserving the existing Docker Compose workflow. The realtime operations dashboard still includes event replay, reconnect recovery, replay-safe derived metrics, trace correlation, latency visualization, and operator-facing health interpretation.
 
 Current dashboard capabilities include:
 
@@ -687,6 +687,44 @@ websocat ws://localhost:8001/ws/operations
 
 ---
 
+## Running The Core Stack On Kubernetes
+
+Failure Playground v4.0-a adds simple Kubernetes manifests under [k8s/](/C:/Users/hmint/failure-playground/k8s) for the core stack:
+
+- API Deployment and Service
+- Worker Deployment with 2 replicas
+- Redis Deployment and Service
+- PostgreSQL Deployment, Service, and PersistentVolumeClaim
+- Shared ConfigMap
+
+Prometheus, Grafana, and Jaeger are not migrated yet. The observability stack migration is deferred to v4.0-b.
+
+Build the backend image from the existing Dockerfile:
+
+```bash
+docker build -t failure-playground-backend:latest ./backend
+```
+
+Apply the manifests:
+
+```bash
+kubectl apply -f k8s/
+kubectl get pods
+kubectl get svc
+kubectl port-forward service/api-service 8001:8000
+```
+
+Then open:
+
+- Dashboard: <http://localhost:8001>
+- API docs: <http://localhost:8001/docs>
+
+Kubernetes does not support Docker Compose `depends_on` directly. The manifests use service discovery, pod restarts, and readiness/liveness probes where reasonable. The Kubernetes service names used by the app are `postgres-service` and `redis-service`.
+
+The full Kubernetes runbook is in [k8s/README.md](/C:/Users/hmint/failure-playground/k8s/README.md).
+
+---
+
 ## Tests
 
 From the `backend` directory:
@@ -745,6 +783,19 @@ These tradeoffs keep the playground small enough to understand while still surfa
 ---
 
 ## Version History
+
+### v4.0-a — Kubernetes Core Stack Migration
+
+- Kubernetes manifests for the core API, workers, Redis, and PostgreSQL stack
+- API exposed through `api-service`
+- PostgreSQL exposed through `postgres-service`
+- Redis exposed through `redis-service`
+- Worker deployment replaces `worker-a` and `worker-b` with 2 replicas
+- Worker pod names are used as worker names through the Kubernetes Downward API
+- Shared ConfigMap for local Kubernetes runtime configuration
+- PostgreSQL PersistentVolumeClaim for local database persistence
+- Observability stack migration explicitly deferred to v4.0-b
+- Existing Docker Compose workflow preserved
 
 ### v3.7 — Incident Workflow
 
@@ -871,7 +922,7 @@ This project is designed for local platform engineering learning, not production
 - Dashboard metrics are derived from operational events, not from a durable metrics or analytics backend.
 - Realtime operational history is optimized for short-term visibility, not audit-grade retention.
 - There is no authentication, authorization, or RBAC.
-- There is no Kubernetes deployment.
+- The Kubernetes deployment currently covers only the core stack; Prometheus, Grafana, and Jaeger migration is deferred to v4.0-b.
 - There is no Kafka or durable event-streaming layer.
 - Grafana covers core system metrics, but latency-specific Grafana panels are still limited compared with the browser dashboard.
 - Incident workflow state is frontend-only browser-local state; acknowledgements and resolved incidents are not yet coordinated across operators or stored durably in the backend.

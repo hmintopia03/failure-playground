@@ -30,6 +30,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 processed_timestamps = []
 
 WORKER_NAME = os.getenv("WORKER_NAME", "worker-default")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://api:8000")
 
 FAILURE_REASONS = [
     "timeout",
@@ -429,7 +430,7 @@ def add_log(db: Session, task_id: int, message: str):
 
 def is_system_paused():
     try:
-        response = requests.get("http://api:8000/system-state")
+        response = requests.get(f"{API_BASE_URL}/system-state")
         data = response.json()
         return data["paused"]
     except Exception:
