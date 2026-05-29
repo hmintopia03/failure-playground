@@ -8,6 +8,7 @@ data:
   REDIS_HOST: redis-service
   REDIS_PORT: "6379"
   API_BASE_URL: http://api-service:8000
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger-service:4317
   POSTGRES_USER: app
   POSTGRES_PASSWORD: app
   POSTGRES_DB: failure_playground

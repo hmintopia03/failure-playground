@@ -15,9 +15,9 @@ The project is intentionally not a product application. It is a systems playgrou
 
 ## Current Status
 
-**Current version:** `v4.0-a` — Kubernetes Core Stack Migration
+**Current version:** `v4.0-b` — Kubernetes Observability Stack Migration
 
-The project now includes local Kubernetes manifests for the core application stack while preserving the existing Docker Compose workflow. The realtime operations dashboard still includes event replay, reconnect recovery, replay-safe derived metrics, trace correlation, latency visualization, and operator-facing health interpretation.
+The project now includes local Kubernetes manifests for the core application and observability stack while preserving the existing Docker Compose workflow. The realtime operations dashboard still includes event replay, reconnect recovery, replay-safe derived metrics, trace correlation, latency visualization, and operator-facing health interpretation.
 
 Current dashboard capabilities include:
 
@@ -687,17 +687,20 @@ websocat ws://localhost:8001/ws/operations
 
 ---
 
-## Running The Core Stack On Kubernetes
+## Running The Stack On Kubernetes
 
-Failure Playground v4.0-a adds simple Kubernetes manifests under [k8s/](/C:/Users/hmint/failure-playground/k8s) for the core stack:
+Failure Playground v4.0-b includes simple Kubernetes manifests under [k8s/](/C:/Users/hmint/failure-playground/k8s) for the application and observability stack:
 
 - API Deployment and Service
 - Worker Deployment with 2 replicas
 - Redis Deployment and Service
 - PostgreSQL Deployment, Service, and PersistentVolumeClaim
 - Shared ConfigMap
+- Jaeger Deployment and Service
+- Prometheus ConfigMap, Deployment, and Service
+- Grafana Deployment and Service
 
-Prometheus, Grafana, and Jaeger are not migrated yet. The observability stack migration is deferred to v4.0-b.
+Grafana runs on Kubernetes in v4.0-b, but dashboard provisioning may remain Docker Compose-first until that setup is worth migrating cleanly.
 
 Build the backend image from the existing Dockerfile:
 
@@ -712,14 +715,31 @@ kubectl apply -f k8s/
 kubectl get pods
 kubectl get svc
 kubectl port-forward service/api-service 8001:8000
+kubectl port-forward service/jaeger-service 16686:16686
+kubectl port-forward service/prometheus-service 9091:9090
+kubectl port-forward service/grafana-service 3000:3000
 ```
 
 Then open:
 
 - Dashboard: <http://localhost:8001>
 - API docs: <http://localhost:8001/docs>
+- Jaeger: <http://localhost:16686>
+- Prometheus: <http://localhost:9091>
+- Grafana: <http://localhost:3000>
 
-Kubernetes does not support Docker Compose `depends_on` directly. The manifests use service discovery, pod restarts, and readiness/liveness probes where reasonable. The Kubernetes service names used by the app are `postgres-service` and `redis-service`.
+Kubernetes does not support Docker Compose `depends_on` directly. The manifests use service discovery, pod restarts, and readiness/liveness probes where reasonable. The Kubernetes service names used by the app are `postgres-service`, `redis-service`, and `jaeger-service`. Prometheus scrapes `/prometheus` through `api-service:8000`.
+
+Useful verification commands:
+
+```bash
+kubectl apply -f k8s/
+kubectl get pods
+kubectl get svc
+kubectl logs deployment/jaeger
+kubectl logs deployment/prometheus
+kubectl logs deployment/grafana
+```
 
 The full Kubernetes runbook is in [k8s/README.md](/C:/Users/hmint/failure-playground/k8s/README.md).
 
@@ -783,6 +803,18 @@ These tradeoffs keep the playground small enough to understand while still surfa
 ---
 
 ## Version History
+
+### v4.0-b — Kubernetes Observability Stack Migration
+
+- Kubernetes manifests for Jaeger, Prometheus, and Grafana
+- Jaeger exposed through `jaeger-service` on UI, OTLP gRPC, and OTLP HTTP ports
+- API and workers export OpenTelemetry traces to `http://jaeger-service:4317`
+- Prometheus config migrated to a Kubernetes ConfigMap
+- Prometheus scrapes the API through `api-service:8000`
+- Prometheus exposed through `prometheus-service`
+- Grafana exposed through `grafana-service`
+- Grafana dashboard provisioning may remain Docker Compose-first for now
+- Existing Docker Compose workflow preserved
 
 ### v4.0-a — Kubernetes Core Stack Migration
 
@@ -922,7 +954,7 @@ This project is designed for local platform engineering learning, not production
 - Dashboard metrics are derived from operational events, not from a durable metrics or analytics backend.
 - Realtime operational history is optimized for short-term visibility, not audit-grade retention.
 - There is no authentication, authorization, or RBAC.
-- The Kubernetes deployment currently covers only the core stack; Prometheus, Grafana, and Jaeger migration is deferred to v4.0-b.
+- Grafana dashboard provisioning is still Docker Compose-first unless migrated separately.
 - There is no Kafka or durable event-streaming layer.
 - Grafana covers core system metrics, but latency-specific Grafana panels are still limited compared with the browser dashboard.
 - Incident workflow state is frontend-only browser-local state; acknowledgements and resolved incidents are not yet coordinated across operators or stored durably in the backend.
@@ -949,7 +981,7 @@ Future work is focused on deeper platform concerns rather than features already 
 
 ### Platform Scale
 
-- Add Kubernetes manifests or Helm chart for API, workers, Redis, PostgreSQL, Prometheus, Grafana, and Jaeger.
+- Add a Helm chart or Kustomize overlays for the Kubernetes stack.
 - Explore worker autoscaling based on queue depth or latency.
 - Add liveness/readiness probes and test pod disruption behavior.
 - Model multi-worker deployment failure modes more explicitly.
