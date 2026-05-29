@@ -95,37 +95,106 @@ It is designed to be understandable on one machine while still exposing problems
 ## Architecture
 
 ```
-                                Browser
-                       v3.5 Operations Dashboard
-                         HTTP + WebSocket client
-                                      |
-                                      v
-                                FastAPI API
-                                      |
-          +---------------------------+---------------------------+
-          |                           |                           |
-          v                           v                           v
-     PostgreSQL                     Redis                     Prometheus
-     - tasks                        - task queue              - /prometheus scrape
-     - task logs                    - pub/sub channel               |
-     - worker heartbeats            - replay history                v
-     - system state                                              Grafana
-          ^                           ^
-          |                           |
-          +---------- Workers --------+
-                         |
-                         +--> OpenTelemetry spans --> Jaeger
-                         |
-                         +--> operational events --> Redis pub/sub/history
+                                  +-------------------+
+                                  | WebSocket         |
+                                  | Dashboard         |
+                                  |                   |
+                                  | - live events     |
+                                  | - event details   |
+                                  | - Open Trace      |
+                                  +---------+---------+
+                                            |
+                                            | derives replay-safe operator metrics
+                                            v
+            +---------------------------------------------------------------+
+            | Dashboard Analysis                                            |
+            | - Failure Rate Metrics                                        |
+            | - Queue Latency Metrics                                       |
+            | - Processing Latency Metrics                                  |
+            | - Per-worker Throughput                                       |
+            | - System Health Analysis                                      |
+            +---------------------------------------------------------------+
+                                            ^
+                                            |
+                         replay + live      |      WebSocket /ws/operations
+                         events             |
+                                            |
++------------+     HTTP      +--------------+---------------+
+| Operators  +-------------->| FastAPI API                  |
+| / clients  |               | - REST control plane         |
++------------+               | - WebSocket bridge           |
+                             | - Prometheus endpoint        |
+                             +------+-----------+-----------+
+                                    |           |
+                  task state/logs   |           | enqueue task IDs
+                                    v           v
+                         +----------+--+     +--+----------------+
+                         | PostgreSQL |     | Redis Queue        |
+                         | - tasks    |     | - task IDs         |
+                         | - logs     |     +--+----------------+
+                         | - workers  |        |
+                         | - state    |        | dequeue task IDs
+                         +----------+-+        v
+                                    |     +----+----------------+
+                                    |     | Workers             |
+                                    |     | - claim tasks       |
+                                    |     | - process/retry     |
+                                    |     | - heartbeat         |
+                                    |     +----+----------------+
+                                    |          |
+                                    |          | operational events
+                                    |          v
+                                    |     +----+----------------+
+                                    |     | Redis Pub/Sub       |
+                                    |     | Event Bus           |
+                                    |     +----+----------------+
+                                    |          |
+                                    |          | persisted recent events
+                                    |          v
+                                    |     +----+----------------+
+                                    |     | Redis Replay        |
+                                    |     | History             |
+                                    |     | latest 100 events   |
+                                    |     +----+----------------+
+                                    |          |
+                                    +----------+-------> FastAPI WebSocket bridge
+
+        +--------------------+                 +------------------+
+        | OpenTelemetry      | spans/traces    | Jaeger           |
+        | API + Workers      +---------------->| trace UI         |
+        +--------------------+                 +------------------+
+                                                        ^
+                                                        |
+                    Dashboard Event -> Trace ID --------+
+
+        +--------------------+   scrape /prometheus   +------------------+
+        | Prometheus         |<----------------------- | FastAPI API      |
+        +---------+----------+                         +------------------+
+                  |
+                  v
+        +--------------------+
+        | Grafana            |
+        | system dashboards  |
+        +--------------------+
 ```
 
-Redis has three roles:
+The runtime has three main paths:
+
+- **Task execution path:** operators call the FastAPI API, the API writes task state to PostgreSQL and pushes task IDs into the Redis Queue, and workers dequeue and process those tasks.
+- **Realtime operations path:** API and workers emit operational events into the Redis Pub/Sub Event Bus. The API also stores recent events in Redis Replay History and bridges replay + live events to the WebSocket Dashboard.
+- **Observability path:** API and workers emit OpenTelemetry traces to Jaeger, while Prometheus scrapes the FastAPI metrics endpoint and Grafana visualizes longer-term system metrics.
+
+Redis is intentionally split into three operational roles:
 
 - **Queue:** transports task IDs from API to workers.
-- **Pub/sub bus:** streams operational events from API/workers to the WebSocket bridge.
+- **Pub/sub event bus:** streams operational events from API/workers to the WebSocket bridge.
 - **Replay history:** stores the latest 100 non-heartbeat operational events for dashboard refresh/reconnect recovery.
 
-PostgreSQL remains the source of truth for task state. Redis is intentionally treated as transport and short-term operational memory, which creates realistic distributed-system edges such as duplicate messages, stale processing rows, and replay boundaries.
+The dashboard does not store its own metrics. It derives Failure Rate Metrics, Queue Latency Metrics, Processing Latency Metrics, Per-worker Throughput, and System Health Analysis from replay-safe operational events and the existing `/metrics` endpoint.
+
+Trace correlation flows from task lifecycle spans into realtime events: a dashboard event displays `trace_id` / `span_id`, and the Open Trace action opens the matching Jaeger trace at `http://localhost:16686/trace/{trace_id}`.
+
+PostgreSQL remains the source of truth for task state. Redis is treated as transport and short-term operational memory, which creates realistic distributed-system edges such as duplicate messages, stale processing rows, and replay boundaries.
 
 ---
 
