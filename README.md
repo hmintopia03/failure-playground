@@ -1,5 +1,7 @@
 # Failure Playground
 
+[![CI](https://github.com/hmintopia03/failure-playground/actions/workflows/ci.yml/badge.svg)](https://github.com/hmintopia03/failure-playground/actions/workflows/ci.yml)
+
 **Failure Playground** is a local **platform engineering and observability playground** for distributed task processing, operational visibility, resilience patterns, and Kubernetes-based deployment.
 
 It models a small production-style platform using FastAPI, PostgreSQL, Redis, worker replicas, Prometheus, Grafana, OpenTelemetry, Jaeger, a realtime operations dashboard, and Kubernetes manifests for the application and observability stack.
@@ -16,9 +18,9 @@ The project is intentionally not a production-ready product. It is a systems pla
 
 ## Current Status
 
-**Current version:** `v4.0-d` - README Production Polish
+**Current version:** `v5.0` - GitHub Actions CI/CD
 
-The project now includes local Kubernetes manifests for the core application stack, observability stack, and worker autoscaling while preserving the existing Docker Compose workflow. The documentation now frames the project as a portfolio-grade platform engineering system rather than only a task queue demo.
+The project now includes a production-style GitHub Actions pipeline for backend tests, dependency installation, Docker image build validation, and Kubernetes manifest dry-run validation while preserving the existing Docker Compose and local Kubernetes workflows.
 
 Current dashboard capabilities include:
 
@@ -68,6 +70,7 @@ It is designed to be understandable on one machine while still exposing problems
 - **v2:** WebSocket operations dashboard, reconnect recovery, Redis replay history, and `event_id` deduplication.
 - **v3:** OpenTelemetry tracing, Jaeger trace links, latency charts, throughput monitoring, System Health, Delivery Metrics, and Incident Workflow.
 - **v4:** Kubernetes core stack, Kubernetes observability stack migration, and worker autoscaling with a HorizontalPodAutoscaler.
+- **v5:** GitHub Actions CI/CD for backend tests, Docker image validation, and Kubernetes manifest validation.
 
 ---
 
@@ -855,19 +858,41 @@ Tests use pytest, FastAPI TestClient, temporary SQLite databases, and fake Redis
 
 ---
 
-## CI
+## CI/CD Pipeline
 
-GitHub Actions runs the backend test suite on push and pull request:
+GitHub Actions runs a production-style validation pipeline on push and pull request events targeting `main`.
 
 ```text
-push / pull_request
+push / pull_request to main
         |
-        v
-install dependencies
+        +--> backend tests
+        |       |
+        |       +--> set up Python 3.13
+        |       +--> install backend dependencies
+        |       +--> run pytest
         |
-        v
-run pytest
+        +--> Docker image builds
+        |       |
+        |       +--> validate docker compose config
+        |       +--> build API image
+        |       +--> build worker image
+        |
+        +--> Kubernetes validation
+                |
+                +--> set up kubectl and kind
+                +--> server-side dry-run apply k8s manifests
 ```
+
+The workflow checks:
+
+- Backend dependency installation from [backend/requirements.txt](/C:/Users/hmint/failure-playground/backend/requirements.txt)
+- Backend test coverage with `pytest`
+- Existing lint or format checks when project tooling is configured
+- Dockerfile validity for API and worker images
+- Docker Compose configuration validity
+- Kubernetes manifest API compatibility with `kubectl apply --dry-run=server`
+
+The CI pipeline is intentionally lightweight. It validates the current architecture without introducing a separate deployment platform, registry push, or heavyweight lint stack before the project needs one.
 
 ---
 
@@ -887,6 +912,17 @@ These tradeoffs keep the playground small enough to understand while still surfa
 ---
 
 ## Version History
+
+### v5.0 - GitHub Actions CI/CD
+
+- Added GitHub Actions workflow for push and pull request checks on `main`
+- Set up Python 3.13 and backend dependency installation in CI
+- Runs backend tests with `pytest`
+- Keeps lint and format validation ready for existing project tooling without introducing new heavy dependencies
+- Builds API and worker Docker images from the existing backend Dockerfile
+- Validates Docker Compose configuration
+- Validates Kubernetes manifests against a kind cluster with `kubectl apply --dry-run=server`
+- Existing application architecture and runtime behavior preserved
 
 ### v4.0-d - README Production Polish
 
@@ -1065,7 +1101,6 @@ Failure Playground is designed for local platform engineering learning and portf
 
 ## Next Roadmap
 
-- **v5.0:** CI/CD with GitHub Actions for build, test, and deployment validation.
 - **v5.1:** Prometheus alert rules for queue pressure, worker health, failure spikes, and dependency degradation.
 - **v5.2:** RBAC for dashboard operations, separating read-only visibility from destructive controls.
 - **v6.0:** Kafka or another durable event-streaming layer for replay, consumer lag, partitioning, and event retention experiments.
