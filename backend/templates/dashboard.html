@@ -55,6 +55,40 @@
             <p id="system-health-reason">Waiting for metrics and live events...</p>
         </div>
     </section>
+    <section class="panel incident-workflow-panel">
+        <div class="panel-heading">
+            <h2>Incident Workflow</h2>
+            <button id="acknowledge-incident-btn" class="hidden">Acknowledge</button>
+        </div>
+
+        <div id="incident-workflow-empty">No active incident</div>
+
+        <div id="incident-workflow-card" class="incident-workflow-card hidden">
+            <div class="incident-workflow-header">
+                <strong id="incident-workflow-type">Unknown</strong>
+                <span id="incident-workflow-status" class="incident-status incident-status-active">active</span>
+            </div>
+            <p id="incident-workflow-summary">Waiting for system health analysis...</p>
+            <dl class="incident-workflow-details">
+                <div>
+                    <dt>Incident ID</dt>
+                    <dd id="incident-workflow-id">-</dd>
+                </div>
+                <div>
+                    <dt>Created</dt>
+                    <dd id="incident-workflow-created">-</dd>
+                </div>
+                <div>
+                    <dt>Acknowledged</dt>
+                    <dd id="incident-workflow-acknowledged">-</dd>
+                </div>
+                <div>
+                    <dt>Resolved</dt>
+                    <dd id="incident-workflow-resolved">-</dd>
+                </div>
+            </dl>
+        </div>
+    </section>
     <section class="panel">
         <h2>Realtime Throughput</h2>
 

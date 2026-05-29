@@ -132,6 +132,10 @@ body.dark-mode #top-bar {
   max-width: 700px;
 }
 
+.incident-workflow-panel {
+  max-width: 700px;
+}
+
 .system-health-card {
   padding: 14px 16px;
   border: 1px solid #ddd;
@@ -247,6 +251,85 @@ body.dark-mode #top-bar {
   color: #666;
   background: rgba(0,0,0,0.03);
   border-radius: 8px;
+}
+
+#incident-workflow-empty {
+  padding: 18px 12px;
+  color: #666;
+  background: rgba(0,0,0,0.03);
+  border-radius: 8px;
+}
+
+.incident-workflow-card {
+  padding: 14px 16px;
+  border: 1px solid #ddd;
+  border-left: 6px solid #dc2626;
+  border-radius: 10px;
+  background: rgba(220, 38, 38, 0.08);
+}
+
+.incident-workflow-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.incident-workflow-header strong {
+  font-size: 20px;
+}
+
+.incident-status {
+  padding: 3px 9px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.incident-status-active {
+  color: #b91c1c;
+  background: rgba(185, 28, 28, 0.1);
+}
+
+.incident-status-acknowledged {
+  color: #b45309;
+  background: rgba(180, 83, 9, 0.1);
+}
+
+.incident-status-resolved {
+  color: #15803d;
+  background: rgba(21, 128, 61, 0.1);
+}
+
+.incident-workflow-card p {
+  margin: 0 0 12px;
+  color: #475569;
+}
+
+.incident-workflow-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.incident-workflow-details div {
+  padding: 8px 10px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.5);
+}
+
+.incident-workflow-details dt {
+  color: #666;
+  font-size: 12px;
+}
+
+.incident-workflow-details dd {
+  margin: 2px 0 0;
+  font-family: monospace;
 }
 
 .worker-throughput-list {

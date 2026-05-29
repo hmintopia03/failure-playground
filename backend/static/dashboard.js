@@ -89,6 +89,23 @@ const processingLatencySamples = []
 const systemHealthCardEl = document.getElementById("system-health-card")
 const systemHealthStateEl = document.getElementById("system-health-state")
 const systemHealthReasonEl = document.getElementById("system-health-reason")
+const incidentWorkflowEmptyEl = document.getElementById("incident-workflow-empty")
+const incidentWorkflowCardEl = document.getElementById("incident-workflow-card")
+const incidentWorkflowIdEl = document.getElementById("incident-workflow-id")
+const incidentWorkflowTypeEl = document.getElementById("incident-workflow-type")
+const incidentWorkflowStatusEl = document.getElementById("incident-workflow-status")
+const incidentWorkflowSummaryEl = document.getElementById("incident-workflow-summary")
+const incidentWorkflowCreatedEl = document.getElementById("incident-workflow-created")
+const incidentWorkflowAcknowledgedEl = document.getElementById("incident-workflow-acknowledged")
+const incidentWorkflowResolvedEl = document.getElementById("incident-workflow-resolved")
+const acknowledgeIncidentBtn = document.getElementById("acknowledge-incident-btn")
+const incidentWorkflowStorageKey = "failure-playground-incident-workflow-v1"
+const maximumIncidentWorkflowRecords = 20
+let incidentWorkflowRecords = loadIncidentWorkflowRecords()
+let incidentSequence = getIncidentSequence(incidentWorkflowRecords)
+let activeIncident = incidentWorkflowRecords.find(
+  (incident) => incident.status === "active" || incident.status === "acknowledged"
+) || null
 let latestMetricsSnapshot = null
 const liveWorkerLastSeen = {}
 const reportedStaleWorkers = new Set()
@@ -871,8 +888,14 @@ function initializeDashboardEventListeners() {
 
   if (clearIncidentHistoryBtn) {
     clearIncidentHistoryBtn.addEventListener("click", () => {
-      incidentHistoryContainer.innerHTML = ""
+      if (incidentHistoryContainer) {
+        incidentHistoryContainer.innerHTML = ""
+      }
     })
+  }
+
+  if (acknowledgeIncidentBtn) {
+    acknowledgeIncidentBtn.addEventListener("click", acknowledgeActiveIncident)
   }
 
   if (closeEventDetailBtn && eventDetailDrawer) {
@@ -941,6 +964,7 @@ function initializeDashboardEventListeners() {
 
 document.addEventListener("DOMContentLoaded", () => {
   initializeDashboardEventListeners()
+  renderIncidentWorkflowPanel()
 })
 
 const websocketReconnectDelays = [1000, 2000, 5000, 10000]
@@ -1649,12 +1673,198 @@ function getWorkerHealthCounts() {
   }
 }
 
+function loadIncidentWorkflowRecords() {
+  try {
+    const stored = localStorage.getItem(incidentWorkflowStorageKey)
+    const records = stored ? JSON.parse(stored) : []
+
+    return Array.isArray(records) ? records.slice(0, maximumIncidentWorkflowRecords) : []
+  } catch (error) {
+    console.warn("Failed to load incident workflow records", error)
+    return []
+  }
+}
+
+function persistIncidentWorkflowRecords() {
+  try {
+    localStorage.setItem(
+      incidentWorkflowStorageKey,
+      JSON.stringify(incidentWorkflowRecords.slice(0, maximumIncidentWorkflowRecords))
+    )
+  } catch (error) {
+    console.warn("Failed to persist incident workflow records", error)
+  }
+}
+
+function getIncidentSequence(records) {
+  return records.reduce((maxSequence, incident) => {
+    const match = String(incident.id || "").match(/^INC-(\d+)$/)
+
+    if (!match) return maxSequence
+
+    return Math.max(maxSequence, Number(match[1]))
+  }, 0)
+}
+
+function getNextIncidentId() {
+  incidentSequence += 1
+  return `INC-${String(incidentSequence).padStart(4, "0")}`
+}
+
+function formatIncidentTimestamp(timestamp) {
+  if (!timestamp) return "-"
+
+  const date = new Date(timestamp)
+
+  if (Number.isNaN(date.getTime())) return "-"
+
+  return date.toLocaleString()
+}
+
+function storeIncidentWorkflowRecord(incident) {
+  const existingIndex = incidentWorkflowRecords.findIndex((item) => item.id === incident.id)
+
+  if (existingIndex >= 0) {
+    incidentWorkflowRecords[existingIndex] = incident
+  } else {
+    incidentWorkflowRecords.unshift(incident)
+  }
+
+  incidentWorkflowRecords = incidentWorkflowRecords.slice(0, maximumIncidentWorkflowRecords)
+  persistIncidentWorkflowRecords()
+}
+
+function renderIncidentWorkflowPanel() {
+  if (
+    !incidentWorkflowEmptyEl ||
+    !incidentWorkflowCardEl ||
+    !incidentWorkflowIdEl ||
+    !incidentWorkflowTypeEl ||
+    !incidentWorkflowStatusEl ||
+    !incidentWorkflowSummaryEl ||
+    !incidentWorkflowCreatedEl ||
+    !incidentWorkflowAcknowledgedEl ||
+    !incidentWorkflowResolvedEl
+  ) {
+    return
+  }
+
+  if (!activeIncident || activeIncident.status === "resolved") {
+    incidentWorkflowEmptyEl.classList.remove("hidden")
+    incidentWorkflowCardEl.classList.add("hidden")
+
+    if (acknowledgeIncidentBtn) {
+      acknowledgeIncidentBtn.classList.add("hidden")
+    }
+
+    return
+  }
+
+  incidentWorkflowEmptyEl.classList.add("hidden")
+  incidentWorkflowCardEl.classList.remove("hidden")
+  incidentWorkflowIdEl.textContent = activeIncident.id
+  incidentWorkflowTypeEl.textContent = activeIncident.type
+  incidentWorkflowStatusEl.textContent = activeIncident.status
+  incidentWorkflowStatusEl.className =
+    `incident-status incident-status-${activeIncident.status}`
+  incidentWorkflowSummaryEl.textContent = activeIncident.summary
+  incidentWorkflowCreatedEl.textContent = formatIncidentTimestamp(activeIncident.createdAt)
+  incidentWorkflowAcknowledgedEl.textContent =
+    formatIncidentTimestamp(activeIncident.acknowledgedAt)
+  incidentWorkflowResolvedEl.textContent = formatIncidentTimestamp(activeIncident.resolvedAt)
+
+  if (acknowledgeIncidentBtn) {
+    acknowledgeIncidentBtn.classList.toggle("hidden", activeIncident.status !== "active")
+  }
+}
+
+function createIncidentFromSystemHealth(state, label, reason) {
+  const incident = {
+    id: getNextIncidentId(),
+    healthState: state,
+    type: label,
+    status: "active",
+    createdAt: new Date().toISOString(),
+    acknowledgedAt: null,
+    resolvedAt: null,
+    summary: reason,
+  }
+
+  activeIncident = incident
+  storeIncidentWorkflowRecord(incident)
+  renderIncidentWorkflowPanel()
+  addIncidentWorkflowRecord(incident, "opened")
+}
+
+function updateIncidentFromSystemHealth(state, label, reason) {
+  if (!activeIncident) return
+
+  const stateChanged = activeIncident.healthState !== state
+  const summaryChanged = activeIncident.summary !== reason
+
+  activeIncident.healthState = state
+  activeIncident.type = label
+  activeIncident.summary = reason
+
+  if (stateChanged || summaryChanged) {
+    storeIncidentWorkflowRecord(activeIncident)
+    renderIncidentWorkflowPanel()
+  }
+
+  if (stateChanged) {
+    addIncidentWorkflowRecord(activeIncident, "updated")
+  }
+}
+
+function acknowledgeActiveIncident() {
+  if (!activeIncident || activeIncident.status !== "active") return
+
+  activeIncident.status = "acknowledged"
+  activeIncident.acknowledgedAt = new Date().toISOString()
+
+  storeIncidentWorkflowRecord(activeIncident)
+  renderIncidentWorkflowPanel()
+  addIncidentWorkflowRecord(activeIncident, "acknowledged")
+}
+
+function resolveActiveIncident(reason) {
+  if (!activeIncident || activeIncident.status === "resolved") return
+
+  const incident = activeIncident
+  incident.status = "resolved"
+  incident.resolvedAt = new Date().toISOString()
+  incident.summary = `Resolved after System Health returned to Healthy. ${reason}`
+
+  storeIncidentWorkflowRecord(incident)
+  addIncidentWorkflowRecord(incident, "resolved")
+
+  activeIncident = null
+  renderIncidentWorkflowPanel()
+}
+
+function updateIncidentWorkflowFromSystemHealth(state, label, reason) {
+  if (state === "unknown") return
+
+  if (state === "healthy") {
+    resolveActiveIncident(reason)
+    return
+  }
+
+  if (!activeIncident || activeIncident.status === "resolved") {
+    createIncidentFromSystemHealth(state, label, reason)
+    return
+  }
+
+  updateIncidentFromSystemHealth(state, label, reason)
+}
+
 function setSystemHealth(state, label, reason) {
   if (!systemHealthCardEl || !systemHealthStateEl || !systemHealthReasonEl) return
 
   systemHealthCardEl.className = `system-health-card health-${state}`
   systemHealthStateEl.textContent = label
   systemHealthReasonEl.textContent = reason
+  updateIncidentWorkflowFromSystemHealth(state, label, reason)
 }
 
 function updateSystemHealthPanel() {
@@ -1945,6 +2155,31 @@ function addIncident(message) {
   const time = new Date().toLocaleTimeString()
 
   item.textContent = `${time} | ${message}`
+
+  incidentHistoryContainer.prepend(item)
+
+  if (incidentHistoryContainer.children.length > 20) {
+    incidentHistoryContainer.removeChild(
+      incidentHistoryContainer.lastChild
+    )
+  }
+}
+
+function addIncidentWorkflowRecord(incident, action) {
+  if (!incidentHistoryContainer) return
+
+  const item = document.createElement("div")
+  item.className = "incident-history-item"
+  item.textContent = [
+    `${new Date().toLocaleTimeString()} | ${action}`,
+    `id=${incident.id}`,
+    `type=${incident.type}`,
+    `status=${incident.status}`,
+    `created=${formatIncidentTimestamp(incident.createdAt)}`,
+    `acknowledged=${formatIncidentTimestamp(incident.acknowledgedAt)}`,
+    `resolved=${formatIncidentTimestamp(incident.resolvedAt)}`,
+    `summary=${incident.summary}`,
+  ].join(" | ")
 
   incidentHistoryContainer.prepend(item)
 

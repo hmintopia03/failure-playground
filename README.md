@@ -15,7 +15,7 @@ The project is intentionally not a product application. It is a systems playgrou
 
 ## Current Status
 
-**Current version:** `v3.6` — Platform Engineering & Observability Playground
+**Current version:** `v3.7` — Platform Engineering & Observability Playground
 
 The project now includes a resilient realtime operations dashboard with event replay, reconnect recovery, replay-safe derived metrics, trace correlation, latency visualization, and operator-facing health interpretation.
 
@@ -37,8 +37,12 @@ Current dashboard capabilities include:
   - Queue Pressure
   - Processing Bottleneck
   - Failure Spike
+- Frontend Incident Workflow:
+  - active
+  - acknowledged
+  - resolved
 
-The dashboard is a compact local operations console: it shows what is happening now, reconstructs recent context after reconnects, explains system health in operator-facing language, and links live events to distributed traces.
+The dashboard is a compact local operations console: it shows what is happening now, reconstructs recent context after reconnects, explains system health in operator-facing language, tracks basic incident state, and links live events to distributed traces.
 
 ---
 
@@ -114,6 +118,7 @@ It is designed to be understandable on one machine while still exposing problems
             | - Processing Latency Metrics                                  |
             | - Per-worker Throughput                                       |
             | - System Health Analysis                                      |
+            | - Incident Workflow                                           |
             +---------------------------------------------------------------+
                                             ^
                                             |
@@ -191,7 +196,7 @@ Redis is intentionally split into three operational roles:
 - **Pub/sub event bus:** streams operational events from API/workers to the WebSocket bridge.
 - **Replay history:** stores the latest 100 non-heartbeat operational events for dashboard refresh/reconnect recovery.
 
-The dashboard does not store its own metrics. It derives Failure Rate Metrics, Queue Latency Metrics, Processing Latency Metrics, Per-worker Throughput, and System Health Analysis from replay-safe operational events and the existing `/metrics` endpoint.
+The dashboard does not store its own backend metrics. It derives Failure Rate Metrics, Delivery Metrics, Queue Latency Metrics, Processing Latency Metrics, Per-worker Throughput, System Health Analysis, and the frontend Incident Workflow from replay-safe operational events and the existing `/metrics` endpoint.
 
 Trace correlation flows from task lifecycle spans into realtime events: a dashboard event displays `trace_id` / `span_id`, and the Open Trace action opens the matching Jaeger trace at `http://localhost:16686/trace/{trace_id}`.
 
@@ -287,6 +292,7 @@ Each event has a stable `event_id`. The dashboard keeps a bounded set of receive
 - processing latency
 - live event counters
 - system health interpretation
+- incident workflow transitions
 
 ### Operational Interpretation
 
@@ -298,6 +304,7 @@ The realtime dashboard does not only render event rows. It derives short-window 
 - Are tasks waiting too long in the queue?
 - Are workers spending too long processing tasks?
 - Is the current state healthy or degraded?
+- Has a degraded state opened, updated, or resolved a local incident?
 
 That operator-facing interpretation is what makes the dashboard more than a WebSocket log viewer.
 
@@ -435,6 +442,28 @@ The logic is intentionally simple and explainable. It is derived from:
 - queue latency samples
 - processing latency samples
 
+### Incident Workflow
+
+The Incident Workflow panel turns System Health into a small local operator workflow.
+
+When System Health enters a non-Healthy state, the dashboard creates or updates one active incident for the continuous degraded period. The incident record includes:
+
+- incident id
+- incident type / health state
+- status
+- created timestamp
+- acknowledged timestamp
+- resolved timestamp
+- summary
+
+Supported incident states:
+
+- **active:** System Health is currently degraded and the incident has not been acknowledged
+- **acknowledged:** an operator clicked Acknowledge in the dashboard
+- **resolved:** System Health returned to Healthy
+
+Acknowledgement is frontend-only and does not call the backend. Resolved incidents remain visible in Incident History, and the current workflow state is stored in browser-local state so a refresh can reconstruct the most recent incident context as far as the replayed health signals allow.
+
 ### Trace Correlation
 
 Task lifecycle events include OpenTelemetry trace fields when a span is active:
@@ -491,11 +520,13 @@ This protects the dashboard from double-counting when the same event is replayed
 The dashboard rebuilds derived metrics from replayed events:
 
 - failure rate
+- delivery metrics
 - retries
 - per-worker throughput
 - queue latency
 - processing latency
 - system health
+- incident workflow state
 
 Latency events carry enough timestamp context to survive replay trimming:
 
@@ -715,6 +746,15 @@ These tradeoffs keep the playground small enough to understand while still surfa
 
 ## Version History
 
+### v3.7 — Incident Workflow
+
+- Incident Workflow panel driven by System Health state
+- Active, acknowledged, and resolved incident states
+- Frontend acknowledgement without backend API calls
+- Automatic incident resolution when System Health returns to Healthy
+- Incident records with id, type, status, timestamps, and summary
+- Local reconstruction across refresh/reconnect using replay-safe health inputs and browser-local workflow state
+
 ### v3.6 — Dashboard Delivery Metrics
 
 - Delivery Metrics panel
@@ -834,7 +874,7 @@ This project is designed for local platform engineering learning, not production
 - There is no Kubernetes deployment.
 - There is no Kafka or durable event-streaming layer.
 - Grafana covers core system metrics, but latency-specific Grafana panels are still limited compared with the browser dashboard.
-- Multi-operator coordination is local/session-oriented; acknowledgments are not shared across users.
+- Incident workflow state is frontend-only browser-local state; acknowledgements and resolved incidents are not yet coordinated across operators or stored durably in the backend.
 
 ---
 
@@ -867,7 +907,7 @@ Future work is focused on deeper platform concerns rather than features already 
 
 - Add authentication and RBAC for dashboard and control-plane actions.
 - Split read-only dashboard access from destructive controls such as queue clearing and reset.
-- Add shared incident acknowledgement across browser sessions.
+- Add backend incident persistence, shared acknowledgement, and audit history across browser sessions.
 - Add audit logging for operator actions.
 
 ### Comparative Worker Frameworks
