@@ -221,6 +221,14 @@ PostgreSQL remains the source of truth for task state. Redis is treated as trans
 
 ---
 
+## Dashboard Overview
+
+The realtime operations dashboard combines live operational events,
+replay-safe metrics, trace correlation, incident workflow tracking,
+and operator-facing system health interpretation.
+
+![Dashboard](backend/images/dashboard-v4.png)
+
 ## Backend Systems
 
 ### Task Queue
@@ -507,6 +515,12 @@ Jaeger: http://localhost:16686/trace/{trace_id}
 
 This makes a live failure, retry, or poison event directly actionable: the operator can jump from a realtime dashboard event to the distributed trace for that task.
 
+### Distributed Trace Example
+
+The dashboard can jump directly from a realtime event
+to the matching Jaeger trace.
+
+![Jaeger Trace](backend/images/jaeger-trace.png)
 ---
 
 ## Operational Resilience Features
@@ -586,6 +600,13 @@ The backend emits structured JSON logs for task lifecycle events, worker behavio
 - `failure_playground_workers_stale`
 
 Grafana is provisioned through Docker Compose with a Prometheus datasource and dashboard panels for queue pressure, task state, worker health, retry/failure behavior, and throughput.
+
+### Grafana Dashboard
+
+Prometheus metrics are visualized through Grafana dashboards
+covering queue pressure, latency, throughput, and worker health.
+
+![Grafana Dashboard](backend/images/grafana.png)
 
 ### OpenTelemetry and Jaeger
 
@@ -703,6 +724,16 @@ websocat ws://localhost:8001/ws/operations
 ```
 
 ---
+## Kubernetes Deployment Verification
+
+The platform now runs on Kubernetes using Deployments, Services,
+a PostgreSQL PersistentVolumeClaim, and a worker HPA.
+
+![Kubernetes deployment](backend/images/k8s-deployment.png)
+
+![Kubernetes Pods](backend/images/k8s-pods.png)
+
+![Kubernetes HPA](backend/images/k8s-hpa.png)
 
 ## Running The Stack On Kubernetes
 
