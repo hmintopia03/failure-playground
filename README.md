@@ -59,7 +59,7 @@ Docker Compose locally
 Kubernetes manifests + HPA
 GitHub Actions: tests + Docker builds + Kubernetes validation
 ```
-
+```
 ### Runtime Flows
 
 **Task Processing**
