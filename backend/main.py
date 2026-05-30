@@ -1,57 +1,64 @@
 import asyncio
 import json
+import logging
 import os
-from collections import Counter
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from fastapi import Depends, FastAPI, Query, Request, WebSocket
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from config import TASK_QUEUE_NAME
-from db import Base, SessionLocal, engine
 from dependencies import get_db
 from logger import OPERATIONS_CHANNEL, OPERATIONS_HISTORY_KEY, OPERATIONS_HISTORY_LIMIT
 from models import Alert, Task, TaskLog, WorkerHeartbeat
 from redis_client import redis_client
-from schemas import alert_to_dict, task_to_dict, worker_to_dict
+from schemas import task_to_dict
+from services.queue_service import clear_queue, enqueue_task, get_queue_length
 from services.task_service import create_task
+
+
+ALERT_COOLDOWN_SECONDS = 60
+QUEUE_PRESSURE_THRESHOLD = 20
+WORKER_ALIVE_THRESHOLD_SECONDS = 10
+
+ENVIRONMENT = os.getenv("ENVIRONMENT", "local")
+SYSTEM_VERSION = "0.1.0"
+SYSTEM_STARTED_AT = datetime.now(UTC)
+SYSTEM_PAUSED_KEY = "system_paused"
+
+
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 app = FastAPI()
+logger = logging.getLogger(__name__)
 
-def setup_tracing(app: FastAPI):
+
+def setup_tracing(app: FastAPI) -> None:
     endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 
     if not endpoint:
         return
 
     resource = Resource.create({
-        "service.name": os.getenv(
-            "OTEL_SERVICE_NAME",
-            "failure-playground-api",
-        )
+        "service.name": os.getenv("OTEL_SERVICE_NAME", "failure-playground-api")
     })
 
     provider = TracerProvider(resource=resource)
-    processor = BatchSpanProcessor(
-        OTLPSpanExporter(endpoint=endpoint, insecure=True)
+    provider.add_span_processor(
+        BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint, insecure=True))
     )
-
-    provider.add_span_processor(processor)
     trace.set_tracer_provider(provider)
-
     FastAPIInstrumentor.instrument_app(app)
 
 
@@ -63,33 +70,6 @@ app.mount(
     name="static",
 )
 
-@app.get("/", response_class=HTMLResponse)
-def dashboard(request: Request):
-    return templates.TemplateResponse(
-        request=request,
-        name="dashboard.html",
-        context={},
-    )
-
-ALERT_COOLDOWN_SECONDS = 60
-QUEUE_PRESSURE_THRESHOLD = 20
-WORKER_ALIVE_THRESHOLD_SECONDS = 10
-
-from services.queue_service import (
-    enqueue_task,
-    dequeue_task,
-    clear_queue,
-    get_queue_length,
-)
-
-
-ENVIRONMENT = os.getenv("ENVIRONMENT", "local")
-
-SYSTEM_VERSION = "0.1.0"
-SYSTEM_STARTED_AT = datetime.now(UTC)
-SYSTEM_PAUSED = False
-
-
 def ensure_utc(value):
     if value is None:
         return None
@@ -99,32 +79,66 @@ def ensure_utc(value):
 
     return value
 
-@app.post("/tasks")
-def create_task_endpoint(
-    priority: int = 1,
-    is_poison: bool = False,
-    db: Session = Depends(get_db),
-):
-    task = create_task(
-        db=db,
-        priority=priority,
-        is_poison=is_poison,
+
+def _is_system_paused() -> bool:
+    value = redis_client.get(SYSTEM_PAUSED_KEY)
+
+    if isinstance(value, bytes):
+        value = value.decode("utf-8")
+
+    return value == "1"
+
+
+def require_admin_token(x_admin_token: str | None = Header(default=None)) -> None:
+    admin_token = os.getenv("ADMIN_TOKEN")
+
+    if admin_token and x_admin_token != admin_token:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+def _count_workers(db: Session, now: datetime) -> tuple[int, int]:
+    """Alive / stale worker 수 반환."""
+    workers = db.query(WorkerHeartbeat).all()
+    alive = 0
+    stale = 0
+    for worker in workers:
+        if not worker.last_seen:
+            stale += 1
+            continue
+
+        seconds_since_seen = (now - ensure_utc(worker.last_seen)).total_seconds()
+        if seconds_since_seen <= WORKER_ALIVE_THRESHOLD_SECONDS:
+            alive += 1
+        else:
+            stale += 1
+    return alive, stale
+
+def _maybe_create_queue_pressure_alert(db: Session, queue_length: int, now: datetime) -> None:
+
+    if queue_length <= QUEUE_PRESSURE_THRESHOLD:
+        return
+
+    existing_alert = (
+        db.query(Alert)
+        .filter(Alert.message.contains("High queue pressure"))
+        .order_by(Alert.id.desc())
+        .first()
     )
 
-    enqueue_task(task.id)
+    if existing_alert:
+        seconds_since_last = (now - ensure_utc(existing_alert.created_at)).total_seconds()
+        if seconds_since_last < ALERT_COOLDOWN_SECONDS:
+            return
 
-    return task_to_dict(task)
+    db.add(Alert(message=f"High queue pressure: {queue_length} tasks waiting"))
+    db.commit()
 
-@app.get("/tasks")
-def get_tasks(
-    status: str | None = Query(
-        default=None,
-        pattern="^(queued|processing|success|failed)$",
-    ),
+
+def _tasks_response(
+    db: Session,
+    status: str | None = None,
     is_poison: bool | None = None,
-    limit: int = Query(default=50, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
-    db: Session = Depends(get_db),
+    limit: int = 50,
+    offset: int = 0,
 ):
     query = db.query(Task)
 
@@ -154,14 +168,105 @@ def get_tasks(
         "offset": offset,
     }
 
-@app.get("/logs")
-def get_logs(
-    task_id: int | None = Query(default=None, ge=1),
-    limit: int = Query(default=50, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
-    db: Session = Depends(get_db),
-):
 
+def _task_detail_response(db: Session, task_id: int):
+    task = (
+        db.query(Task)
+        .filter(Task.id == task_id)
+        .first()
+    )
+
+    if not task:
+        return None
+
+    logs = (
+        db.query(TaskLog)
+        .filter(TaskLog.task_id == task.id)
+        .all()
+    )
+
+    return {
+        "id": task.id,
+        "status": task.status,
+        "retry_count": task.retry_count,
+        "retry_at": task.retry_at,
+        "created_at": task.created_at,
+        "updated_at": task.updated_at,
+        "processing_started_at": task.processing_started_at,
+        "logs": [
+            {
+                "message": log.message,
+                "created_at": log.created_at
+            }
+            for log in logs
+        ]
+    }
+
+
+def _retry_task(db: Session, task_id: int):
+    task = (
+        db.query(Task)
+        .filter(Task.id == task_id)
+        .first()
+    )
+
+    if not task:
+        return None
+
+    task.status = "queued"
+    task.retry_count = 0
+    task.retry_at = None
+
+    db.commit()
+
+    log = TaskLog(
+        task_id=task.id,
+        message="Task manually retried"
+    )
+
+    db.add(log)
+    db.commit()
+
+    return {
+        "message": "Task retried",
+        "task_id": task.id
+    }
+
+
+def _delete_tasks_by_status(db: Session, status: str, message: str):
+    tasks = (
+        db.query(Task)
+        .filter(Task.status == status)
+        .all()
+    )
+
+    count = len(tasks)
+    task_ids = [task.id for task in tasks]
+
+    if task_ids:
+        (
+            db.query(TaskLog)
+            .filter(TaskLog.task_id.in_(task_ids))
+            .delete(synchronize_session=False)
+        )
+
+    for task in tasks:
+        db.delete(task)
+
+    db.commit()
+
+    return {
+        "message": message,
+        "deleted_count": count
+    }
+
+
+def _logs_response(
+    db: Session,
+    task_id: int | None = None,
+    limit: int = 50,
+    offset: int = 0,
+):
     query = db.query(TaskLog)
 
     if task_id is not None:
@@ -192,150 +297,58 @@ def get_logs(
         "offset": offset,
     }
 
-@app.get("/dead-letter")
-def get_dead_letter_tasks():
-    db: Session = SessionLocal()
 
-    tasks = (
-        db.query(Task)
-        .filter(Task.status == "failed")
-        .all()
-    )
+def _workers_response(db: Session):
+    workers = db.query(WorkerHeartbeat).all()
 
     result = []
 
-    for task in tasks:
+    for worker in workers:
         result.append({
-            "id": task.id,
-            "status": task.status,
-            "retry_count": task.retry_count,
-            "created_at": task.created_at,
-            "updated_at": task.updated_at,
+            "worker_name": worker.worker_name,
+            "last_seen": worker.last_seen,
+            "processed_count": worker.processed_count,
         })
 
-    db.close()
+    return result
+
+
+def _reset_worker_counts(db: Session) -> None:
+    workers = db.query(WorkerHeartbeat).all()
+
+    for worker in workers:
+        worker.processed_count = 0
+
+    db.commit()
+
+
+def _alerts_response(db: Session):
+    alerts = db.query(Alert).all()
+
+    result = []
+
+    for alert in alerts:
+        result.append({
+            "id": alert.id,
+            "message": alert.message,
+            "created_at": alert.created_at,
+        })
 
     return result
 
-@app.post("/tasks/{task_id}/retry")
-def retry_task(task_id: int):
-    db: Session = SessionLocal()
 
-    task = (
-        db.query(Task)
-        .filter(Task.id == task_id)
-        .first()
-    )
-
-    if not task:
-        db.close()
-        return {"error": "Task not found"}
-
-    task.status = "queued"
-    task.retry_count = 0
-    task.retry_at = None
+def _clear_alerts(db: Session):
+    count = db.query(Alert).delete(synchronize_session=False)
 
     db.commit()
-
-    retried_task_id = task.id
-
-    log = TaskLog(
-        task_id=retried_task_id,
-        message="Task manually retried"
-    )
-
-    db.add(log)
-    db.commit()
-
-    db.close()
 
     return {
-        "message": "Task retried",
-        "task_id": retried_task_id
+        "message": "Alerts cleared",
+        "deleted_count": count
     }
 
 
-@app.get("/tasks/{task_id}")
-def get_task_detail(task_id: int):
-    db: Session = SessionLocal()
-
-    task = (
-        db.query(Task)
-        .filter(Task.id == task_id)
-        .first()
-    )
-
-    if not task:
-        db.close()
-        return {"error": "Task not found"}
-
-    logs = (
-        db.query(TaskLog)
-        .filter(TaskLog.task_id == task.id)
-        .all()
-    )
-
-    result = {
-        "id": task.id,
-        "status": task.status,
-        "retry_count": task.retry_count,
-        "retry_at": task.retry_at,
-        "created_at": task.created_at,
-        "updated_at": task.updated_at,
-        "processing_started_at": task.processing_started_at,
-        
-        "logs": [
-            {
-                "message": log.message,
-                "created_at": log.created_at
-            }
-            for log in logs
-        ]
-    }
-
-    db.close()
-
-    return result
-
-
-
-def _maybe_create_queue_pressure_alert(db: Session, queue_length: int, now: datetime) -> None:
-
-    if queue_length <= QUEUE_PRESSURE_THRESHOLD:
-        return
-
-    existing_alert = (
-        db.query(Alert)
-        .filter(Alert.message.contains("High queue pressure"))
-        .order_by(Alert.id.desc())
-        .first()
-    )
-
-    if existing_alert:
-        seconds_since_last = (now - existing_alert.created_at).total_seconds()
-        if seconds_since_last < ALERT_COOLDOWN_SECONDS:
-            return
-
-    db.add(Alert(message=f"High queue pressure: {queue_length} tasks waiting"))
-    db.commit()
-
-
-def _count_workers(db: Session, now: datetime) -> tuple[int, int]:
-    """Alive / stale worker 수 반환."""
-    workers = db.query(WorkerHeartbeat).all()
-    alive = 0
-    stale = 0
-    for worker in workers:
-        seconds_since_seen = (now - worker.last_seen).total_seconds()
-        if seconds_since_seen <= WORKER_ALIVE_THRESHOLD_SECONDS:
-            alive += 1
-        else:
-            stale += 1
-    return alive, stale
-
-
-@app.get("/metrics")
-def get_metrics(db: Session = Depends(get_db)):
+def _metrics_response(db: Session):
     redis_queue_length = get_queue_length()
 
     queued_count = db.query(Task).filter(Task.status == "queued").count()
@@ -343,21 +356,15 @@ def get_metrics(db: Session = Depends(get_db)):
     success_count = db.query(Task).filter(Task.status == "success").count()
     failed_count = db.query(Task).filter(Task.status == "failed").count()
 
-    failure_reasons = {}
-    
-    failed_tasks = (
-        db.query(Task)
-        .filter(Task.status == "failed")
-        .all()
-    )
-
-    for task in failed_tasks:
-        reason = task.failure_reason or "unknown"
-
-        if reason not in failure_reasons:
-            failure_reasons[reason] = 0
-
-        failure_reasons[reason] += 1
+    failure_reasons = {
+        reason or "unknown": count
+        for reason, count in (
+            db.query(Task.failure_reason, func.count(Task.id))
+            .filter(Task.status == "failed")
+            .group_by(Task.failure_reason)
+            .all()
+        )
+    }
 
     high_priority_queued = (
         db.query(Task)
@@ -374,58 +381,36 @@ def get_metrics(db: Session = Depends(get_db)):
 
     poison_count = (
         db.query(Task)
-        .filter(Task.is_poison == True)
+        .filter(Task.is_poison.is_(True))
         .count()
     )
 
     failed_poison_count = (
         db.query(Task)
-        .filter(Task.is_poison == True)
+        .filter(Task.is_poison.is_(True))
         .filter(Task.status == "failed")
         .count()
     )
 
-    alive_workers = 0
-    stale_workers = 0
-
-    workers = db.query(WorkerHeartbeat).all()
-
     now = datetime.now(UTC)
-
-    for worker in workers:
-        if not worker.last_seen:
-            stale_workers += 1
-            continue
-
-        last_seen = ensure_utc(worker.last_seen)
-
-        seconds_since_seen = (
-            now - last_seen
-        ).total_seconds()
-
-        if seconds_since_seen <= 10:
-            alive_workers += 1
-        else:
-            stale_workers += 1
-
-    throughput_last_minute = 0
+    alive_workers, stale_workers = _count_workers(db, now)
 
     recent_successes = (
         db.query(Task)
         .filter(Task.status == "success")
+        .order_by(Task.id.desc())
+        .limit(1000)
         .all()
     )
-    
+
+    throughput_last_minute = 0
 
     for task in recent_successes:
         if not task.updated_at:
             continue
 
         updated_at = ensure_utc(task.updated_at)
-
-        seconds_since_update = (
-            now - updated_at
-        ).total_seconds()
+        seconds_since_update = (now - updated_at).total_seconds()
 
         if seconds_since_update <= 60:
             throughput_last_minute += 1
@@ -452,162 +437,46 @@ def get_metrics(db: Session = Depends(get_db)):
         "throughput_last_minute": throughput_last_minute,
     }
 
-@app.get("/health")
-def health_check(db: Session = Depends(get_db)):
-    database_status = "ok"
-    redis_status = "ok"
 
-    try:
-        db.execute(text("SELECT 1"))
-    except Exception:
-        database_status = "error"
-
-    try:
-        redis_client.ping()
-    except Exception:
-        redis_status = "error"
-
-    overall_status = "ok"
-
-    if database_status != "ok" or redis_status != "ok":
-        overall_status = "degraded"
-
+def _report_response(db: Session):
     return {
-        "status": overall_status,
-        "database": database_status,
-        "redis": redis_status,
+        "metrics": _metrics_response(db),
+        "workers": _workers_response(db),
+        "alerts": _alerts_response(db),
+        "recent_logs": _logs_response(db, limit=20)["items"],
+        "tasks": _tasks_response(db),
     }
-    
-@app.get("/dashboard")
-def dashboard(request: Request):
-    return templates.TemplateResponse(
-        "dashboard.html",
-        {"request": request},
+
+
+
+@app.post("/tasks")
+def create_task_endpoint(
+    priority: int = 1,
+    is_poison: bool = False,
+    db: Session = Depends(get_db),
+):
+    task = create_task(
+        db=db,
+        priority=priority,
+        is_poison=is_poison,
     )
 
-@app.post("/pause")
-def pause_system():
-    global SYSTEM_PAUSED
-    SYSTEM_PAUSED = True
-    return {"paused": SYSTEM_PAUSED}
+    enqueue_task(task.id)
 
-
-@app.post("/resume")
-def resume_system():
-    global SYSTEM_PAUSED
-    SYSTEM_PAUSED = False
-    return {"paused": SYSTEM_PAUSED}
-
-
-@app.get("/system-state")
-def get_system_state():
-    return {"paused": SYSTEM_PAUSED}
-
-@app.get("/workers")
-def get_workers(db: Session = Depends(get_db)):
-    workers = db.query(WorkerHeartbeat).all()
-
-    result = []
-
-    for worker in workers:
-        result.append({
-            "worker_name": worker.worker_name,
-            "last_seen": worker.last_seen,
-            "processed_count": worker.processed_count,
-        })
-
-    return result
-
-@app.post("/tasks/{task_id}/duplicate")
-def duplicate_task(task_id: int):
-    redis_client.lpush(TASK_QUEUE_NAME, task_id)
-
-    return {
-        "message": "Duplicate task pushed into Redis",
-        "task_id": task_id
-    }
-
-@app.delete("/tasks/completed")
-def delete_completed_tasks():
-    db: Session = SessionLocal()
-
-    completed_tasks = (
-        db.query(Task)
-        .filter(Task.status == "success")
-        .all()
-    )
-
-    count = len(completed_tasks)
-
-    for task in completed_tasks:
-        db.delete(task)
-
-    db.commit()
-    db.close()
-
-    return {
-        "message": "Completed tasks deleted",
-        "deleted_count": count
-    }
-
-@app.delete("/tasks/failed")
-def delete_failed_tasks():
-    db: Session = SessionLocal()
-
-    failed_tasks = (
-        db.query(Task)
-        .filter(Task.status == "failed")
-        .all()
-    )
-
-    count = len(failed_tasks)
-
-    for task in failed_tasks:
-        db.delete(task)
-
-    db.commit()
-    db.close()
-
-    return {
-        "message": "Failed tasks deleted",
-        "deleted_count": count
-    }
-
-@app.post("/workers/reset-counts")
-def reset_worker_counts():
-    db: Session = SessionLocal()
-
-    workers = db.query(WorkerHeartbeat).all()
-
-    for worker in workers:
-        worker.processed_count = 0
-
-    db.commit()
-    db.close()
-
-    return {"message": "Worker counts reset"}
+    return task_to_dict(task)
 
 @app.post("/tasks/bulk")
-def create_bulk_tasks(count: int = 10, priority: int = 1):
-    db: Session = SessionLocal()
-
+def create_bulk_tasks(
+    count: int = Query(default=10, ge=1, le=1000),
+    priority: int = 1,
+    db: Session = Depends(get_db),
+):
     created_task_ids = []
 
     for _ in range(count):
-        task = Task(
-            status="queued",
-            retry_count=0,
-            priority=priority
-        )
-
-        db.add(task)
-        db.commit()
-        db.refresh(task)
-
+        task = create_task(db=db, priority=priority)
         enqueue_task(task.id)
         created_task_ids.append(task.id)
-
-    db.close()
 
     return {
         "message": "Bulk tasks created",
@@ -615,93 +484,104 @@ def create_bulk_tasks(count: int = 10, priority: int = 1):
         "task_ids": created_task_ids
     }
 
-@app.get("/alerts")
-def get_alerts(db: Session = Depends(get_db)):
-    alerts = db.query(Alert).all()
+@app.get("/tasks")
+def get_tasks(
+    status: str | None = Query(
+        default=None,
+        pattern="^(queued|processing|success|failed)$",
+    ),
+    is_poison: bool | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+):
+    return _tasks_response(db, status, is_poison, limit, offset)
 
-    result = []
+@app.get("/tasks/{task_id}")
+def get_task_detail(
+    task_id: int,
+    db: Session = Depends(get_db),
+):
+    result = _task_detail_response(db, task_id)
 
-    for alert in alerts:
-        result.append({
-            "id": alert.id,
-            "message": alert.message,
-            "created_at": alert.created_at,
-        })
+    if result is None:
+        return {"error": "Task not found"}
 
     return result
 
+@app.post("/tasks/{task_id}/retry")
+def retry_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+):
+    result = _retry_task(db, task_id)
+
+    if result is None:
+        return {"error": "Task not found"}
+
+    return result
+
+
+@app.post("/tasks/{task_id}/duplicate")
+def duplicate_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+):
+    task = (
+        db.query(Task)
+        .filter(Task.id == task_id)
+        .first()
+    )
+
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    enqueue_task(task.id)
+
+    return {
+        "message": "Duplicate task pushed into Redis",
+        "task_id": task_id
+    }
+
+@app.delete("/tasks/completed")
+def delete_completed_tasks(db: Session = Depends(get_db)):
+    return _delete_tasks_by_status(db, "success", "Completed tasks deleted")
+
+@app.delete("/tasks/failed")
+def delete_failed_tasks(db: Session = Depends(get_db)):
+    return _delete_tasks_by_status(db, "failed", "Failed tasks deleted")
+
+@app.get("/logs")
+def get_logs(
+    task_id: int | None = Query(default=None, ge=1),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+):
+    return _logs_response(db, task_id, limit, offset)
+
+@app.get("/workers")
+def get_workers(db: Session = Depends(get_db)):
+    return _workers_response(db)
+
+
+@app.post("/workers/reset-counts")
+def reset_worker_counts(db: Session = Depends(get_db)):
+    _reset_worker_counts(db)
+    return {"message": "Worker counts reset"}
+
+
+@app.get("/alerts")
+def get_alerts(db: Session = Depends(get_db)):
+    return _alerts_response(db)
+
 @app.delete("/alerts")
-def clear_alerts():
-    db: Session = SessionLocal()
+def clear_alerts(db: Session = Depends(get_db)):
+    return _clear_alerts(db)
 
-    alerts = db.query(Alert).all()
-
-    count = len(alerts)
-
-    for alert in alerts:
-        db.delete(alert)
-
-    db.commit()
-    db.close()
-
-    return {
-        "message": "Alerts cleared",
-        "deleted_count": count
-    }
-
-@app.get("/report")
-def get_report():
-    db: Session = SessionLocal()
-
-    report = {
-        "metrics": get_metrics(),
-        "workers": get_workers(),
-        "alerts": get_alerts(),
-        "recent_logs": get_logs()[-20:],
-        "tasks": get_tasks()
-    }
-
-    db.close()
-
-    return report
-
-@app.get("/config")
-def get_config():
-    return {
-        "environment": ENVIRONMENT,
-        "version": SYSTEM_VERSION
-    }
-
-@app.delete("/queue")
-def clear_queue():
-    deleted_count = redis_client.delete(TASK_QUEUE_NAME)
-
-    return {
-        "message": "Queue cleared",
-        "deleted": deleted_count
-    }
-
-@app.delete("/reset")
-def reset_system():
-    db: Session = SessionLocal()
-
-    redis_client.delete(TASK_QUEUE_NAME)
-
-    db.query(TaskLog).delete()
-    db.query(Alert).delete()
-    db.query(Task).delete()
-
-    workers = db.query(WorkerHeartbeat).all()
-
-    for worker in workers:
-        worker.processed_count = 0
-
-    db.commit()
-    db.close()
-
-    return {
-        "message": "System reset complete"
-    }
+@app.get("/metrics")
+def get_metrics(db: Session = Depends(get_db)):
+    return _metrics_response(db)
 
 @app.get("/prometheus", response_class=PlainTextResponse)
 def get_prometheus_metrics(db: Session = Depends(get_db)):
@@ -712,41 +592,21 @@ def get_prometheus_metrics(db: Session = Depends(get_db)):
 
     poison_count = (
         db.query(Task)
-        .filter(Task.is_poison == True)
+        .filter(Task.is_poison.is_(True))
         .count()
     )
 
     failed_poison_count = (
         db.query(Task)
-        .filter(Task.is_poison == True)
+        .filter(Task.is_poison.is_(True))
         .filter(Task.status == "failed")
         .count()
     )
 
     redis_queue_length = get_queue_length()
 
-    workers = db.query(WorkerHeartbeat).all()
-
     now = datetime.now(UTC)
-
-    alive_workers = 0
-    stale_workers = 0
-
-    for worker in workers:
-        if not worker.last_seen:
-            stale_workers += 1
-            continue
-
-        last_seen = ensure_utc(worker.last_seen)
-
-        seconds_since_seen = (
-            now - last_seen
-        ).total_seconds()
-
-        if seconds_since_seen <= 10:
-            alive_workers += 1
-        else:
-            stale_workers += 1
+    alive_workers, stale_workers = _count_workers(db, now)
 
     metrics = [
         "# HELP failure_playground_tasks_queued Number of queued tasks",
@@ -789,9 +649,115 @@ def get_prometheus_metrics(db: Session = Depends(get_db)):
 
     return "\n".join(metrics)
 
+
+@app.get("/health")
+def health_check(db: Session = Depends(get_db)):
+    database_status = "ok"
+    redis_status = "ok"
+
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception:
+        database_status = "error"
+
+    try:
+        redis_client.ping()
+    except Exception:
+        redis_status = "error"
+
+    overall_status = "ok"
+
+    if database_status != "ok" or redis_status != "ok":
+        overall_status = "degraded"
+
+    return {
+        "status": overall_status,
+        "database": database_status,
+        "redis": redis_status,
+    }
+
+@app.get("/config")
+def get_config():
+    return {
+        "environment": ENVIRONMENT,
+        "version": SYSTEM_VERSION
+    }
+
+@app.get("/system-state")
+def get_system_state():
+    return {"paused": _is_system_paused()}
+
+@app.post("/pause")
+def pause_system(_: None = Depends(require_admin_token)):
+    try:
+        redis_client.set(SYSTEM_PAUSED_KEY, "1")
+        paused = _is_system_paused()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Redis unavailable") from exc
+
+    return {"paused": paused}
+
+
+@app.post("/resume")
+def resume_system(_: None = Depends(require_admin_token)):
+    try:
+        redis_client.set(SYSTEM_PAUSED_KEY, "0")
+        paused = _is_system_paused()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Redis unavailable") from exc
+
+    return {"paused": paused}
+
+
+@app.delete("/queue")
+def clear_task_queue():
+    deleted_count = clear_queue()
+
+    return {
+        "message": "Queue cleared",
+        "deleted": deleted_count
+    }
+
+@app.delete("/reset")
+def reset_system(
+    _: None = Depends(require_admin_token),
+    db: Session = Depends(get_db),
+):
+    clear_queue()
+
+    db.query(TaskLog).delete()
+    db.query(Alert).delete()
+    db.query(Task).delete()
+
+    workers = db.query(WorkerHeartbeat).all()
+
+    for worker in workers:
+        worker.processed_count = 0
+
+    db.commit()
+
+    return {
+        "message": "System reset complete"
+    }
+
+
+@app.get("/report")
+def get_report(db: Session = Depends(get_db)):
+    return _report_response(db)
+
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon():
     return FileResponse(str(BASE_DIR / "static" / "favicon.svg"))
+
+
+@app.get("/", response_class=HTMLResponse)
+def dashboard(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="dashboard.html",
+        context={},
+    )
+
 
 @app.websocket("/ws/operations")
 async def operations_websocket(websocket: WebSocket):
@@ -825,8 +791,11 @@ async def operations_websocket(websocket: WebSocket):
 
             await asyncio.sleep(0.1)
 
-    except Exception as e:
-        print("websocket disconnected", e)
+    except WebSocketDisconnect:
+        logger.info("operations websocket disconnected")
+
+    except Exception:
+        logger.exception("unexpected operations websocket error")
 
     finally:
         pubsub.close()

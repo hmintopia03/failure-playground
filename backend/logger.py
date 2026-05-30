@@ -42,7 +42,6 @@ def log_event(event, **fields):
         **fields,
     }
 
-
     message = json.dumps(payload, default=str)
 
     logger.info(message)
