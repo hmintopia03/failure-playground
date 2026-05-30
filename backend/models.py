@@ -1,40 +1,35 @@
 from sqlalchemy import Column, Integer, String, ForeignKey
 from db import Base
 from sqlalchemy import DateTime
+from sqlalchemy import Boolean, Integer
 from datetime import datetime, UTC
-from sqlalchemy import Boolean
-from sqlalchemy import Integer
 
 class Task(Base):
     __tablename__ = "tasks"
 
-
     id = Column(Integer, primary_key=True, index=True)
     status = Column(String, default="queued")
     retry_count = Column(Integer, default=0)
-
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     updated_at = Column(DateTime, default=lambda: datetime.now(UTC))
-
     retry_at = Column(DateTime, nullable=True)
-
     processing_started_at = Column(DateTime, nullable=True)
     priority = Column(Integer, default=1)
     failure_reason = Column(String, nullable=True)
-
     is_poison = Column(Boolean, default=False)
-
     processing_duration_seconds = Column(Integer, nullable=True)
 
 class TaskLog(Base):
     __tablename__ = "task_logs"
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+
     id = Column(Integer, primary_key=True, index=True)
     task_id = Column(Integer, ForeignKey("tasks.id"))
     message = Column(String)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
 
 class WorkerHeartbeat(Base):
     __tablename__ = "worker_heartbeats"
+
     id = Column(Integer, primary_key=True)
     worker_name = Column(String, unique=True)
     last_seen = Column(DateTime, default=lambda: datetime.now(UTC))

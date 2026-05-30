@@ -1,31 +1,9 @@
-import os
 import asyncio
 import json
-
+import os
 from collections import Counter
-from datetime import datetime, UTC, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
-
-from fastapi import Depends, FastAPI, Query, Request, WebSocket
-from fastapi.responses import HTMLResponse, PlainTextResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-
-from sqlalchemy import func, text
-from sqlalchemy.orm import Session
-
-from config import TASK_QUEUE_NAME
-from db import Base, SessionLocal, engine
-from dependencies import get_db
-from models import Alert, Task, TaskLog, WorkerHeartbeat
-from redis_client import redis_client
-from logger import (
-    OPERATIONS_CHANNEL,
-    OPERATIONS_HISTORY_KEY,
-    OPERATIONS_HISTORY_LIMIT,
-)
-from schemas import alert_to_dict, task_to_dict, worker_to_dict
-from services.task_service import create_task
 
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -33,7 +11,21 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from fastapi import Depends, FastAPI, Query, Request, WebSocket
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from sqlalchemy import func, text
+from sqlalchemy.orm import Session
 
+from config import TASK_QUEUE_NAME
+from db import Base, SessionLocal, engine
+from dependencies import get_db
+from logger import OPERATIONS_CHANNEL, OPERATIONS_HISTORY_KEY, OPERATIONS_HISTORY_LIMIT
+from models import Alert, Task, TaskLog, WorkerHeartbeat
+from redis_client import redis_client
+from schemas import alert_to_dict, task_to_dict, worker_to_dict
+from services.task_service import create_task
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 

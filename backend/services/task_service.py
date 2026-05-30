@@ -1,11 +1,9 @@
 from datetime import datetime, UTC
-
 from models import Task
 from logger import log_event
 
 def create_task(db, priority=1, is_poison=False):
     now = datetime.now(UTC)
-
     
     task = Task(
         status="queued",

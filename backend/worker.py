@@ -4,28 +4,24 @@ import time
 from datetime import datetime, timedelta, UTC
 
 import requests
-from sqlalchemy.orm import Session
-
-from config import (
-    MAX_RETRIES,
-    TASK_TIMEOUT_SECONDS,
-    MAX_TASKS_PER_WINDOW,
-    WINDOW_SECONDS,
-)
-from db import SessionLocal, Base, engine
-from logger import logger, log_event
-from models import Task, TaskLog, WorkerHeartbeat
-from redis_client import redis_client
-from services.queue_service import (
-    enqueue_task,
-    dequeue_task,
-)
-
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from sqlalchemy.orm import Session
+
+from config import (
+    MAX_RETRIES,
+    MAX_TASKS_PER_WINDOW,
+    TASK_TIMEOUT_SECONDS,
+    WINDOW_SECONDS,
+)
+from db import Base, SessionLocal, engine
+from logger import log_event, logger
+from models import Task, TaskLog, WorkerHeartbeat
+from redis_client import redis_client
+from services.queue_service import dequeue_task, enqueue_task
 
 processed_timestamps = []
 
@@ -90,6 +86,105 @@ def isoformat_utc(value):
         return None
 
     return value.isoformat()
+
+def add_log(db: Session, task_id: int, message: str):
+    log = TaskLog(
+        task_id=task_id,
+        message=message,
+    )
+
+    db.add(log)
+    db.commit()
+
+
+def is_system_paused():
+    try:
+        response = requests.get(f"{API_BASE_URL}/system-state")
+        data = response.json()
+        return data["paused"]
+    except Exception:
+        return False
+
+
+def update_heartbeat(db: Session):
+    worker = (
+        db.query(WorkerHeartbeat)
+        .filter(
+            WorkerHeartbeat.worker_name == WORKER_NAME
+        )
+        .first()
+    )
+
+    if not worker:
+        worker = WorkerHeartbeat(
+            worker_name=WORKER_NAME,
+        )
+
+        db.add(worker)
+
+    worker.last_seen = now_utc()
+
+    db.commit()
+
+    log_event(
+        "worker_heartbeat",
+        worker_name=WORKER_NAME,
+        last_seen=worker.last_seen,
+        processed_count=worker.processed_count,
+    )
+
+
+def recover_stuck_tasks(db: Session):
+    with tracer.start_as_current_span("worker.recover_stuck_task") as span:
+        span.set_attribute("worker.action", "recover_stuck_tasks")
+
+        stuck_tasks = (
+            db.query(Task)
+            .filter(Task.status == "processing")
+            .all()
+        )
+
+        span.set_attribute("worker.stuck_task_candidates", len(stuck_tasks))
+
+        for stuck_task in stuck_tasks:
+            if not stuck_task.processing_started_at:
+                continue
+
+            processing_started_at = ensure_utc(
+                stuck_task.processing_started_at
+            )
+
+            seconds_processing = (
+                now_utc() - processing_started_at
+            ).total_seconds()
+
+            if seconds_processing <= TASK_TIMEOUT_SECONDS:
+                continue
+
+            stuck_task.status = "queued"
+            stuck_task.processing_started_at = None
+            stuck_task.updated_at = now_utc()
+
+            db.commit()
+
+            add_log(
+                db,
+                stuck_task.id,
+                "Task recovered after timeout",
+            )
+
+            enqueue_task(stuck_task.id)
+
+            span.set_attribute("worker.recovered_task_id", stuck_task.id)
+
+            log_event(
+                "task_recovered_after_timeout",
+                worker_name=WORKER_NAME,
+                task_id=stuck_task.id,
+                seconds_processing=seconds_processing,
+                task_timeout_seconds=TASK_TIMEOUT_SECONDS,
+            )
+
 
 
 def process_task(task: Task, db: Session):
@@ -365,104 +460,6 @@ def run_worker():
                 )
 
         db.close()
-
-def recover_stuck_tasks(db: Session):
-    with tracer.start_as_current_span("worker.recover_stuck_task") as span:
-        span.set_attribute("worker.action", "recover_stuck_tasks")
-
-        stuck_tasks = (
-            db.query(Task)
-            .filter(Task.status == "processing")
-            .all()
-        )
-
-        span.set_attribute("worker.stuck_task_candidates", len(stuck_tasks))
-
-        for stuck_task in stuck_tasks:
-            if not stuck_task.processing_started_at:
-                continue
-
-            processing_started_at = ensure_utc(
-                stuck_task.processing_started_at
-            )
-
-            seconds_processing = (
-                now_utc() - processing_started_at
-            ).total_seconds()
-
-            if seconds_processing <= TASK_TIMEOUT_SECONDS:
-                continue
-
-            stuck_task.status = "queued"
-            stuck_task.processing_started_at = None
-            stuck_task.updated_at = now_utc()
-
-            db.commit()
-
-            add_log(
-                db,
-                stuck_task.id,
-                "Task recovered after timeout",
-            )
-
-            enqueue_task(stuck_task.id)
-
-            span.set_attribute("worker.recovered_task_id", stuck_task.id)
-
-            log_event(
-                "task_recovered_after_timeout",
-                worker_name=WORKER_NAME,
-                task_id=stuck_task.id,
-                seconds_processing=seconds_processing,
-                task_timeout_seconds=TASK_TIMEOUT_SECONDS,
-            )
-
-
-def add_log(db: Session, task_id: int, message: str):
-    log = TaskLog(
-        task_id=task_id,
-        message=message,
-    )
-
-    db.add(log)
-    db.commit()
-
-
-def is_system_paused():
-    try:
-        response = requests.get(f"{API_BASE_URL}/system-state")
-        data = response.json()
-        return data["paused"]
-    except Exception:
-        return False
-
-
-def update_heartbeat(db: Session):
-    worker = (
-        db.query(WorkerHeartbeat)
-        .filter(
-            WorkerHeartbeat.worker_name == WORKER_NAME
-        )
-        .first()
-    )
-
-    if not worker:
-        worker = WorkerHeartbeat(
-            worker_name=WORKER_NAME,
-        )
-
-        db.add(worker)
-
-    worker.last_seen = now_utc()
-
-    db.commit()
-
-    log_event(
-        "worker_heartbeat",
-        worker_name=WORKER_NAME,
-        last_seen=worker.last_seen,
-        processed_count=worker.processed_count,
-    )
 
 
 if __name__ == "__main__":
