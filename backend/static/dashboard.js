@@ -1,3 +1,4 @@
+// 1. Global state
 let currentFilter = "all";
 let refreshInProgress = false;
 let taskChart = null;
@@ -10,6 +11,7 @@ let logOffset = 0;
 let logLimit = 30;
 
 let taskTotal = 0;
+let logTotal = 0;
 let liveEventFilter = "all"
 let isLiveStreamPaused = false
 
@@ -23,6 +25,7 @@ const maximumReceivedEventIds = 500
 const receivedEventIds = new Set()
 const receivedEventIdOrder = []
 
+// 2. DOM references
 const liveEventsContainer = document.getElementById("live-events")
 const wsStatus = document.getElementById("ws-status")
 const liveWorkersContainer = document.getElementById("live-workers")
@@ -36,6 +39,7 @@ const liveEventRetriesEl = document.getElementById("live-event-retries")
 
 const toastContainer = document.getElementById("toast-container")
 const recentFailures = []
+let failureSpikeIncidentOpen = false
 const failureSpikeAlert = document.getElementById( "failure-spike-alert")
 const acknowledgeAlertBtn =document.getElementById("acknowledge-alert-btn")
 const incidentHistoryContainer = document.getElementById("incident-history")
@@ -85,6 +89,7 @@ const maximumProcessingLatencySamples = 100
 const maximumProcessingLatencyTrackedTasks = 300
 const processingStartedTimestamps = new Map()
 const processingStartedTaskIds = []
+const processedLatencyTaskIds = new Set()
 const processingLatencySamples = []
 const systemHealthCardEl = document.getElementById("system-health-card")
 const systemHealthStateEl = document.getElementById("system-health-state")
@@ -101,6 +106,29 @@ const incidentWorkflowResolvedEl = document.getElementById("incident-workflow-re
 const acknowledgeIncidentBtn = document.getElementById("acknowledge-incident-btn")
 const incidentWorkflowStorageKey = "failure-playground-incident-workflow-v1"
 const maximumIncidentWorkflowRecords = 20
+
+function loadIncidentWorkflowRecords() {
+  try {
+    const stored = localStorage.getItem(incidentWorkflowStorageKey)
+    const records = stored ? JSON.parse(stored) : []
+
+    return Array.isArray(records) ? records.slice(0, maximumIncidentWorkflowRecords) : []
+  } catch (error) {
+    console.warn("Failed to load incident workflow records", error)
+    return []
+  }
+}
+
+function getIncidentSequence(records) {
+  return records.reduce((maxSequence, incident) => {
+    const match = String(incident.id || "").match(/^INC-(\d+)$/)
+
+    if (!match) return maxSequence
+
+    return Math.max(maxSequence, Number(match[1]))
+  }, 0)
+}
+
 let incidentWorkflowRecords = loadIncidentWorkflowRecords()
 let incidentSequence = getIncidentSequence(incidentWorkflowRecords)
 let activeIncident = incidentWorkflowRecords.find(
@@ -109,7 +137,6 @@ let activeIncident = incidentWorkflowRecords.find(
 let latestMetricsSnapshot = null
 const liveWorkerLastSeen = {}
 const reportedStaleWorkers = new Set()
-const recoveredWorkers = new Set()
 
 const eventDetailDrawer = document.getElementById("event-detail-drawer")
 const eventDetailContent = document.getElementById("event-detail-content")
@@ -122,6 +149,7 @@ const liveEventSearchInput = document.getElementById("live-event-search")
 const clearLiveEventsBtn = document.getElementById("clear-live-events-btn")
 const clearIncidentHistoryBtn = document.getElementById("clear-incident-history-btn")
 
+// 3. Chart setup
 let throughputChart = null
 let failureRateChart = null
 
@@ -191,14 +219,14 @@ if (failureRateCanvas) {
 
 function setFilter(status) {
 currentFilter = status;
-loadTasks();
+
+const statusFilter = document.getElementById("task-status-filter");
+
+if (statusFilter) {
+  statusFilter.value = status === "all" ? "" : status;
 }
 
-function formatUptime(seconds) {
-const hours = Math.floor(seconds / 3600);
-const minutes = Math.floor((seconds % 3600) / 60);
-const secs = seconds % 60;
-return `${hours}h ${minutes}m ${secs}s`;
+loadTasks();
 }
 
 function toggleDarkMode() {
@@ -266,6 +294,7 @@ function applyLogFilter() {
     loadLogs();
 }
 
+// 4. HTTP API loaders
 async function loadMetrics() {
     const data = await fetchJson("/metrics");
     latestMetricsSnapshot = data
@@ -371,7 +400,6 @@ taskChart = new Chart(ctx, {
 
 async function loadLogs() {
 
-    let logTotal = 0;
     const taskIdFilter = document.getElementById("log-task-id-filter");
 
     const params = new URLSearchParams();
@@ -483,34 +511,21 @@ resumeButton.disabled = !paused;
 
 const el = document.getElementById("system-state");
 
-const healthResponse = await fetch("/health");
-const healthData = await healthResponse.json();
-
-const uptime = healthData.uptime_seconds;
-
 if (paused) {
     el.innerHTML =
         `<b style="color:red">SYSTEM PAUSED</b>
         <br>
         environment: ${environment}
         <br>
-        version: ${version}
-        <br>
-        ${/*uptime: ${formatUptime(uptime)*/ ""}`;
+        version: ${version}`;
 } else {
     el.innerHTML =
         `<b style="color:green">SYSTEM RUNNING</b>
         <br>
         environment: ${environment}
         <br>
-        version: ${version}
-        <br>
-        ${/* uptime: ${formatUptime(uptime)*/ ""}`;
+        version: ${version}`;
 }
-}
-
-if (localStorage.getItem("darkMode") === "true") {
-document.body.classList.add("dark-mode");
 }
 
 async function refresh() {
@@ -672,6 +687,8 @@ async function loadTasks() {
 
     if (statusFilter && statusFilter.value) {
         params.set("status", statusFilter.value);
+    } else if (currentFilter !== "all") {
+        params.set("status", currentFilter);
     }
 
     if (poisonFilter && poisonFilter.value) {
@@ -754,7 +771,7 @@ document.getElementById("alerts-panel").textContent =
         .map(alert =>
             `[${alert.created_at}] ${alert.message}`
         )
-        .join("\\n");
+        .join("\n");
 }
 async function clearAlerts() {
 const ok = confirm("Clear all alerts?");
@@ -791,15 +808,18 @@ if (!ok) {
 
 setDangerButtonsDisabled(true);
 
-await fetch("/reset", {
-    method: "DELETE"
-});
+try {
+    await fetch("/reset", {
+        method: "DELETE"
+    });
 
-await refresh();
-showActionStatus("System reset complete");
-showActionStatus("Queue cleared");
+    await refresh();
+    showActionStatus("System reset complete");
+    showActionStatus("Queue cleared");
+} finally {
+    setDangerButtonsDisabled(false);
 }
-refresh();
+}
 let refreshTimer = null;
 
 function startRefreshTimer() {
@@ -820,17 +840,6 @@ function startRefreshTimer() {
     }, interval);
 }
 
-function formatAge(seconds) {
-    if (seconds < 60) {
-        return `${seconds}s`;
-    }
-
-    const minutes = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-
-    return `${minutes}m ${secs}s`;
-}
-
 async function fetchJson(url) {
     const response = await fetch(url);
 
@@ -846,6 +855,8 @@ function initializeDashboardEventListeners() {
   liveEventFilterButtons.forEach((button) => {
     button.addEventListener("click", () => {
       liveEventFilter = button.dataset.filter
+      updateLiveEventFilterButtons()
+      applyLiveEventSearchFilter()
     })
   })
 
@@ -862,6 +873,7 @@ function initializeDashboardEventListeners() {
   if (acknowledgeAlertBtn && failureSpikeAlert) {
     acknowledgeAlertBtn.addEventListener("click", () => {
       failureSpikeAlert.classList.add("hidden")
+      failureSpikeIncidentOpen = false
     })
   }
 
@@ -958,14 +970,7 @@ function initializeDashboardEventListeners() {
   if (workerThroughputWindowEl) {
     workerThroughputWindowEl.addEventListener("change", updateWorkerThroughputPanel)
   }
-
-  startRefreshTimer()
 }
-
-document.addEventListener("DOMContentLoaded", () => {
-  initializeDashboardEventListeners()
-  renderIncidentWorkflowPanel()
-})
 
 const websocketReconnectDelays = [1000, 2000, 5000, 10000]
 const reconnectedStatusDuration = 2000
@@ -976,6 +981,7 @@ let reconnectAttempt = 0
 let hasConnected = false
 let isSocketShuttingDown = false
 
+// 5. WebSocket lifecycle
 function setWebSocketStatus(state) {
   if (!wsStatus) return
 
@@ -1117,10 +1123,7 @@ function restoreOperationsWebSocket() {
   connectOperationsWebSocket()
 }
 
-connectOperationsWebSocket()
-window.addEventListener("pagehide", cleanupOperationsWebSocket)
-window.addEventListener("pageshow", restoreOperationsWebSocket)
-
+// 6. Live event processing
 function renderLiveWorker(data) {
   const id = `live-worker-${data.worker_name}`
 
@@ -1458,6 +1461,11 @@ function recordQueueLatencyEvent(data) {
   const waitMs = Math.max(timestamp - createdTimestamp, 0)
 
   queueStartedTaskIds.add(taskId)
+
+  while (queueStartedTaskIds.size > maximumQueueLatencyTrackedTasks) {
+    queueStartedTaskIds.delete(queueStartedTaskIds.values().next().value)
+  }
+
   queueLatencySamples.push({
     taskId,
     timestamp,
@@ -1554,6 +1562,10 @@ function recordProcessingLatencyEvent(data) {
     return
   }
 
+  if (processedLatencyTaskIds.has(taskId)) {
+    return
+  }
+
   const startedTimestamp =
     parseProcessingReferenceTimestamp(data) ?? processingStartedTimestamps.get(taskId)
 
@@ -1561,6 +1573,7 @@ function recordProcessingLatencyEvent(data) {
 
   const durationMs = Math.max(timestamp - startedTimestamp, 0)
 
+  processedLatencyTaskIds.add(taskId)
   processingLatencySamples.push({
     taskId,
     timestamp,
@@ -1568,7 +1581,11 @@ function recordProcessingLatencyEvent(data) {
   })
 
   while (processingLatencySamples.length > maximumProcessingLatencySamples) {
-    processingLatencySamples.shift()
+    const removedSample = processingLatencySamples.shift()
+
+    if (removedSample) {
+      processedLatencyTaskIds.delete(removedSample.taskId)
+    }
   }
 
   updateProcessingLatencyPanel()
@@ -1673,18 +1690,6 @@ function getWorkerHealthCounts() {
   }
 }
 
-function loadIncidentWorkflowRecords() {
-  try {
-    const stored = localStorage.getItem(incidentWorkflowStorageKey)
-    const records = stored ? JSON.parse(stored) : []
-
-    return Array.isArray(records) ? records.slice(0, maximumIncidentWorkflowRecords) : []
-  } catch (error) {
-    console.warn("Failed to load incident workflow records", error)
-    return []
-  }
-}
-
 function persistIncidentWorkflowRecords() {
   try {
     localStorage.setItem(
@@ -1694,16 +1699,6 @@ function persistIncidentWorkflowRecords() {
   } catch (error) {
     console.warn("Failed to persist incident workflow records", error)
   }
-}
-
-function getIncidentSequence(records) {
-  return records.reduce((maxSequence, incident) => {
-    const match = String(incident.id || "").match(/^INC-(\d+)$/)
-
-    if (!match) return maxSequence
-
-    return Math.max(maxSequence, Number(match[1]))
-  }, 0)
 }
 
 function getNextIncidentId() {
@@ -1933,21 +1928,34 @@ function updateSystemHealthPanel() {
 }
 
 function appendLiveEvent(data, isReplayed = false) {
+  if (isTerminalTaskEvent(data.event) && data.task_id) {
+    queueStartedTaskIds.delete(String(data.task_id))
+  }
+
+  if (!isReplayed && (data.event.includes("failed") || data.event.includes("poison"))) {
+    const message = formatEvent(data)
+    showToast(message)
+    addIncident(message)
+  }
+
+  if (!isReplayed && data.event === "task_succeeded") {
+    recordThroughputSuccess()
+  }
+
+  updateLiveEventStats(data)
+
+  if (!isReplayed) {
+    detectFailureSpike(data)
+  }
+
   if (isLiveStreamPaused) {
     return
   }
 
-    if (!shouldShowLiveEvent(data)) {
-    return
-    }
-
-    if (!matchesLiveEventSearch(data)) {
-    return
-    }
-
   const eventCard = document.createElement("div")
   const severity = getEventSeverity(data)
   eventCard.dataset.searchText = JSON.stringify(data).toLowerCase()
+  eventCard.dataset.eventType = data.event || ""
 
   if (data.event_id) {
     eventCard.dataset.eventId = data.event_id
@@ -1976,25 +1984,10 @@ function appendLiveEvent(data, isReplayed = false) {
     eventDetailDrawer.classList.remove("hidden")
     })
   liveEventsContainer.prepend(eventCard)
+  applyLiveEventVisibilityToRow(eventCard)
 
   if (liveEventsContainer.children.length > maximumLiveEvents) {
     liveEventsContainer.removeChild(liveEventsContainer.lastChild)
-  }
-
-  if (!isReplayed && (data.event.includes("failed") || data.event.includes("poison"))) {
-    const message = formatEvent(data)
-    showToast(message)
-    addIncident(message)
-  }
-
-    if (!isReplayed && data.event === "task_succeeded") {
-    recordThroughputSuccess()
-    }
-
-  updateLiveEventStats(data)
-
-  if (!isReplayed) {
-    detectFailureSpike(data)
   }
 }
 function renderEventTraceFields(data) {
@@ -2058,26 +2051,35 @@ function formatEvent(data) {
       return JSON.stringify(data)
   }
 }
-function shouldShowLiveEvent(data) {
+function shouldShowLiveEventType(eventType) {
   if (liveEventFilter === "all") return true
 
   if (liveEventFilter === "task") {
-    return data.event.startsWith("task_")
+    return eventType.startsWith("task_")
   }
 
   if (liveEventFilter === "failure") {
-    return data.event.includes("failed") || data.event.includes("poison")
+    return eventType.includes("failed") || eventType.includes("poison")
   }
 
   if (liveEventFilter === "retry") {
-    return data.event.includes("retry")
+    return eventType.includes("retry")
   }
 
   if (liveEventFilter === "worker") {
-    return data.event.startsWith("worker_")
+    return eventType.startsWith("worker_")
   }
 
   return true
+}
+
+function updateLiveEventFilterButtons() {
+  liveEventFilterButtons.forEach((button) => {
+    const isActive = button.dataset.filter === liveEventFilter
+    button.classList.toggle("active", isActive)
+    button.classList.toggle("selected", isActive)
+    button.setAttribute("aria-pressed", String(isActive))
+  })
 }
 function updateLiveEventStats(data) {
   if (!liveEventTotalEl || !liveEventFailuresEl || !liveEventRetriesEl) {
@@ -2136,14 +2138,20 @@ function detectFailureSpike(data) {
 
   if (recentFailures.length >= 5) {
     triggerFailureSpikeAlert()
+  } else {
+    failureSpikeIncidentOpen = false
   }
 }
 
 function triggerFailureSpikeAlert() {
   if (!failureSpikeAlert) return
 
+  if (!failureSpikeIncidentOpen && failureSpikeAlert.classList.contains("hidden")) {
+    addIncident("Failure spike detected")
+    failureSpikeIncidentOpen = true
+  }
+
   failureSpikeAlert.classList.remove("hidden")
-  addIncident("Failure spike detected")
 }  
 
 function addIncident(message) {
@@ -2280,37 +2288,53 @@ function getEventSeverity(data) {
   return "info"
 }
 
-function matchesLiveEventSearch(data) {
-  if (!liveEventSearchQuery) {
-    return true
-  }
+function applyLiveEventVisibilityToRow(row) {
+  const matches =
+    (row.dataset.searchText || "").includes(
+      liveEventSearchQuery
+    ) &&
+    shouldShowLiveEventType(row.dataset.eventType || "")
 
-  const text =
-    JSON.stringify(data).toLowerCase()
-
-  return text.includes(
-    liveEventSearchQuery
-  )
+  row.style.display = matches ? "" : "none"
 }
 
 function applyLiveEventSearchFilter() {
   const items =
     document.querySelectorAll(".live-event")
 
-  items.forEach((item) => {
-    const matches =
-      item.dataset.searchText.includes(
-        liveEventSearchQuery
-      )
-
-    item.style.display =
-      matches ? "" : "none"
-  })
+  items.forEach(applyLiveEventVisibilityToRow)
 }
 
-setInterval(updateWorkerHealth, 1000)
-setInterval(updateThroughputChart, 1000)
-setInterval(updateFailureRateChart, 1000)
-setInterval(updateDeliveryMetricsPanel, 1000)
-setInterval(updateWorkerThroughputPanel, 1000)
-setInterval(updateSystemHealthPanel, 1000)
+let dashboardIntervalsStarted = false
+
+// 7. Dashboard startup
+function startDashboardIntervals() {
+  if (dashboardIntervalsStarted) return
+
+  dashboardIntervalsStarted = true
+  setInterval(updateWorkerHealth, 1000)
+  setInterval(updateThroughputChart, 1000)
+  setInterval(updateFailureRateChart, 1000)
+  setInterval(updateDeliveryMetricsPanel, 1000)
+  setInterval(updateWorkerThroughputPanel, 1000)
+  setInterval(() => {
+    trimWorkerThroughputEvents()
+    updateSystemHealthPanel()
+  }, 1000)
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  if (localStorage.getItem("darkMode") === "true") {
+    document.body.classList.add("dark-mode")
+  }
+
+  initializeDashboardEventListeners()
+  updateLiveEventFilterButtons()
+  renderIncidentWorkflowPanel()
+  refresh()
+  startRefreshTimer()
+  startDashboardIntervals()
+  window.addEventListener("pagehide", cleanupOperationsWebSocket)
+  window.addEventListener("pageshow", restoreOperationsWebSocket)
+  connectOperationsWebSocket()
+})
